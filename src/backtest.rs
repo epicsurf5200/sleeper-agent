@@ -16,7 +16,7 @@ use crate::strategy::Strategy;
 use crate::types::*;
 use crate::{lineup, news::NewsItem};
 use anyhow::{anyhow, Result};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 const TEAMS: usize = 12;
 const ROUNDS: usize = 15;
@@ -224,8 +224,8 @@ pub async fn run(client: &SleeperClient, anthropic: &Anthropic, args: BacktestAr
     let mut ai_wins_vs_greedy = 0u32;
     let empty_news: Vec<NewsItem> = Vec::new();
     println!(
-        "{:<5} {:>8} {:>8} {:>8} {:>8}   {}",
-        "week", "AI", "greedy", "naive", "optimal", "AI reasoning (snippet)"
+        "{:<5} {:>8} {:>8} {:>8} {:>8}   AI reasoning (snippet)",
+        "week", "AI", "greedy", "naive", "optimal"
     );
 
     for week in 1..=args.weeks {
