@@ -1,0 +1,15 @@
+[Unit]
+Description=Run sleeper-agent analysis every 3 hours during waking hours
+
+[Timer]
+# 08:00–23:00 local, every 3 hours. Adjust to taste — this replaces
+# daemon.interval_minutes and daemon.active_hour_* when using the timer.
+OnCalendar=*-*-* 08,11,14,17,20,23:00:00
+# Catch up after the host was suspended or the container was down.
+Persistent=true
+# Stagger so a whole fleet doesn't hit Sleeper on the same second.
+RandomizedDelaySec=300
+Unit=sleeper-agent-once.service
+
+[Install]
+WantedBy=timers.target

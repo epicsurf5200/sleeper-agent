@@ -54,6 +54,33 @@ enum Command {
         #[arg(short, long)]
         receive: String,
     },
+    /// Backtest the AI manager against a real historical season.
+    Backtest {
+        /// Season to replay (e.g. 2025).
+        #[arg(long, default_value = "2025")]
+        season: String,
+        /// Number of weeks to replay.
+        #[arg(long, default_value_t = 14)]
+        weeks: u8,
+        /// Draft slot (1-12) for the backtested team.
+        #[arg(long, default_value_t = 5)]
+        slot: usize,
+        /// Override the Claude model for this run (e.g. claude-opus-4-8).
+        #[arg(long)]
+        model: Option<String>,
+        /// Skip AI calls; sweep the form-blend weight to size the headroom.
+        #[arg(long)]
+        dry: bool,
+    },
+    /// Run headless, analysing periodically and alerting via webhook.
+    Daemon {
+        /// Run one cycle and exit (useful for cron or verifying setup).
+        #[arg(long)]
+        once: bool,
+        /// Print alerts instead of sending them.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Show league-wide trending adds and drops (last 24h).
     Trending,
     /// Show recent league transactions (waivers, trades, FA moves).
@@ -103,6 +130,27 @@ async fn main() -> Result<()> {
 
     let client = Arc::new(SleeperClient::new()?);
 
+    // `backtest` needs no league — handle before full connect.
+    if let Some(Command::Backtest { season, weeks, slot, model, dry }) = &cli.command {
+        let mut acfg = cfg.anthropic.clone();
+        if let Some(m) = model {
+            acfg.model = m.clone();
+        }
+        let anthropic = anthropic::Anthropic::new(acfg)?.with_context(cfg.load_context()?);
+        return backtest::run(
+            &client,
+            &anthropic,
+            backtest::BacktestArgs {
+                season: season.clone(),
+                weeks: *weeks,
+                slot: *slot,
+                strategy: cfg.settings.strategy,
+                dry: *dry,
+            },
+        )
+        .await;
+    }
+
     // `leagues` only needs the username — handle before full connect.
     if let Some(Command::Leagues) = &cli.command {
         let leagues = LeagueSession::discover_leagues(&client, &cfg.sleeper.username).await?;
@@ -124,14 +172,17 @@ async fn main() -> Result<()> {
     let session = Arc::new(
         LeagueSession::connect(client.clone(), &cfg.sleeper.username, league_override).await?,
     );
-    let anthropic = anthropic::Anthropic::new(cfg.anthropic.clone())?;
+    // Only AI-backed commands need the Anthropic key — construct lazily.
+    let anthropic = || -> Result<anthropic::Anthropic> {
+        Ok(anthropic::Anthropic::new(cfg.anthropic.clone())?.with_context(cfg.load_context()?))
+    };
     let news_fetcher = Arc::new(news::NewsFetcher::new(cfg.settings.news_sources.clone())?);
 
     match cli.command.unwrap_or(Command::Ui) {
         Command::Ui => {
             ui::App::new(
                 session,
-                anthropic,
+                anthropic()?,
                 news_fetcher,
                 cfg.settings.strategy,
                 Duration::from_secs(cfg.settings.refresh_seconds),
@@ -139,21 +190,30 @@ async fn main() -> Result<()> {
             .run()
             .await
         }
-        Command::Gui => run_gui(session, anthropic, news_fetcher, cfg).await,
+        Command::Gui => run_gui(session, anthropic()?, news_fetcher, cfg).await,
         Command::Roster => cmd_roster(&session).await,
         Command::Info => cmd_info(&session).await,
-        Command::Lineup { week } => cmd_lineup(&session, &anthropic, &news_fetcher, &cfg, week).await,
-        Command::Waiver { pool } => cmd_waiver(&session, &anthropic, &news_fetcher, &cfg, pool).await,
+        Command::Lineup { week } => cmd_lineup(&session, &anthropic()?, &news_fetcher, &cfg, week).await,
+        Command::Waiver { pool } => cmd_waiver(&session, &anthropic()?, &news_fetcher, &cfg, pool).await,
         Command::Trade { partner, send, receive } => {
-            cmd_trade(&session, &anthropic, &news_fetcher, &cfg, partner, send, receive).await
+            cmd_trade(&session, &anthropic()?, &news_fetcher, &cfg, partner, send, receive).await
+        }
+        Command::Daemon { once, dry_run } => {
+            daemon::run(
+                &cfg,
+                &session,
+                &anthropic()?,
+                daemon::DaemonArgs { once, dry_run },
+            )
+            .await
         }
         Command::Trending => cmd_trending(&session).await,
         Command::Transactions { weeks } => cmd_transactions(&session, weeks).await,
         Command::Bracket => cmd_bracket(&session).await,
         Command::TradedPicks => cmd_traded_picks(&session).await,
-        Command::Draft { interval } => cmd_draft_watch(&session, &anthropic, &news_fetcher, &cfg, interval).await,
-        Command::DraftSuggest => cmd_draft_suggest(&session, &anthropic, &news_fetcher, &cfg).await,
-        Command::Leagues | Command::Init => unreachable!(),
+        Command::Draft { interval } => cmd_draft_watch(&session, &anthropic()?, &news_fetcher, &cfg, interval).await,
+        Command::DraftSuggest => cmd_draft_suggest(&session, &anthropic()?, &news_fetcher, &cfg).await,
+        Command::Leagues | Command::Init | Command::Backtest { .. } => unreachable!(),
     }
 }
 
@@ -169,10 +229,7 @@ async fn run_gui(
     )));
     scheduler.spawn(session.clone(), news_fetcher.clone());
     let rt = tokio::runtime::Handle::current();
-    let strategy = cfg.settings.strategy;
-    tokio::task::block_in_place(move || {
-        gui::run(rt, session, anthropic, scheduler, strategy)
-    })
+    tokio::task::block_in_place(move || gui::run(rt, session, anthropic, scheduler, cfg))
 }
 
 #[cfg(not(feature = "gui"))]
@@ -323,8 +380,17 @@ async fn cmd_trade(
     let my_roster = session.my_roster(week).await?;
     let all = session.all_rosters(week).await?;
     let feed = news_fetcher.fetch_all(50).await;
-    let send_v: Vec<String> = send.split(',').map(|s| s.trim().to_string()).collect();
-    let recv_v: Vec<String> = receive.split(',').map(|s| s.trim().to_string()).collect();
+    // Filter empty tokens ("CMC," would otherwise substring-match anything).
+    let send_v: Vec<String> = send
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let recv_v: Vec<String> = receive
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     let a = trade::analyze(
         anthropic,
         &my_roster,
@@ -522,6 +588,8 @@ async fn cmd_draft_watch(
         roster.team_name,
         cfg.settings.strategy.label()
     );
+    // interval 0 would busy-loop against the Sleeper API.
+    let interval = interval.max(1);
     let mut last_pick = 0u32;
     let mut suggested_for = 0u32;
     loop {
@@ -531,17 +599,22 @@ async fn cmd_draft_watch(
                     println!("Draft complete.");
                     break;
                 }
-                if let Some(p) = state.picks.last() {
-                    if p.pick_number != last_pick {
-                        last_pick = p.pick_number;
-                        println!(
-                            "  R{}.{} {} → {}",
-                            p.round,
-                            p.pick_number,
-                            p.team_name,
-                            p.player_name.as_deref().unwrap_or("?")
-                        );
-                    }
+                // Print every pick made since the last poll, not just the latest.
+                let mut new_picks: Vec<&types::DraftPick> = state
+                    .picks
+                    .iter()
+                    .filter(|p| p.pick_number > last_pick)
+                    .collect();
+                new_picks.sort_by_key(|p| p.pick_number);
+                for p in new_picks {
+                    last_pick = p.pick_number;
+                    println!(
+                        "  R{}.{} {} → {}",
+                        p.round,
+                        p.pick_number,
+                        p.team_name,
+                        p.player_name.as_deref().unwrap_or("?")
+                    );
                 }
                 if dm.is_my_turn(&state) && state.current_pick != suggested_for {
                     suggested_for = state.current_pick;

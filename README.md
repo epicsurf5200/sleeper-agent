@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo-lockup.svg" alt="SLEEPER AGENT" width="320">
+</p>
+
 # sleeper-agent
 
 > *An agent for Sleeper. A sleeper agent for your league.*
@@ -69,8 +73,28 @@ sa bracket               # playoff brackets
 sa traded-picks          # future picks that changed hands
 sa draft -i 5            # watch draft; AI suggestions when you're on the clock
 sa draft-suggest         # one-shot pick suggestion
+sa daemon                # headless monitor: analyse on a timer, alert on changes
 sa -s high_stakes lineup # strategy override on any command
 ```
+
+## Background monitoring
+
+`sa daemon` runs the same analysis on a schedule and pushes an alert to a
+webhook (Discord by default) when the recommendation actually changes — a
+better lineup is available, a starter is ruled out, a waiver upgrade appears,
+or Claude finds a trade worth proposing. Alerts are deduped by content
+fingerprint, so a 3-hour interval doesn't re-send the same advice all day.
+
+```sh
+sa daemon --once --dry-run   # print what it would send, send nothing
+sa daemon --once             # one real cycle
+sa daemon                    # loop forever (what the systemd unit runs)
+```
+
+Configure it under `notify:` and `daemon:` in config.yaml, or in the GUI's
+**Settings** tab. To leave it running on a Proxmox LXC or any Linux box, see
+[deploy/README.md](deploy/README.md) — systemd units, an installer, and the
+webhook/secret setup.
 
 ### Strategies
 
@@ -109,7 +133,9 @@ src/
 ├── api.rs         # SleeperClient (every endpoint) + LeagueSession (domain layer)
 ├── main.rs        # `sa` CLI
 ├── ui.rs          # ratatui TUI (10 tabs)
-├── gui.rs         # egui desktop GUI (8 tabs)      [feature "gui", default on]
+├── gui.rs         # egui desktop GUI (9 tabs, incl. Settings) [feature "gui"]
+├── daemon.rs      # headless monitor loop: triggers → deduped alerts
+├── notify.rs      # Discord / raw-JSON webhook delivery
 ├── bin/gui_main.rs# `sa-gui`
 ├── anthropic.rs   # Claude Messages API client
 ├── strategy.rs    # conservative / balanced / high_stakes

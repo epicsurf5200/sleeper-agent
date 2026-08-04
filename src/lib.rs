@@ -1,12 +1,15 @@
 pub mod anthropic;
 pub mod api;
+pub mod backtest;
 pub mod config;
 pub mod draft;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod lineup;
 pub mod metrics;
+pub mod daemon;
 pub mod news;
+pub mod notify;
 pub mod scheduler;
 pub mod strategy;
 pub mod trade;

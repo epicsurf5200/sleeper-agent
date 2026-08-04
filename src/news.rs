@@ -51,15 +51,43 @@ impl NewsFetcher {
     }
 
     pub async fn fetch_all(&self, limit: usize) -> Vec<NewsItem> {
-        let mut all = Vec::new();
-        for src in &self.sources {
-            match self.fetch(src).await {
-                Ok(items) => all.extend(items),
-                Err(e) => tracing::warn!(source=%src, err=%e, "news source failed"),
+        // Fetch sources concurrently — serial fetches cost up to N×15s on
+        // slow/dead feeds. Interleave round-robin so one large feed doesn't
+        // crowd the others out of the truncated result.
+        let results =
+            futures::future::join_all(self.sources.iter().map(|src| self.fetch_logged(src)))
+                .await;
+        let mut queues: Vec<std::collections::VecDeque<NewsItem>> = results
+            .into_iter()
+            .map(std::collections::VecDeque::from)
+            .collect();
+        let mut all = Vec::with_capacity(limit);
+        'outer: loop {
+            let mut any = false;
+            for q in &mut queues {
+                if let Some(item) = q.pop_front() {
+                    all.push(item);
+                    any = true;
+                    if all.len() >= limit {
+                        break 'outer;
+                    }
+                }
+            }
+            if !any {
+                break;
             }
         }
-        all.truncate(limit);
         all
+    }
+
+    async fn fetch_logged(&self, src: &str) -> Vec<NewsItem> {
+        match self.fetch(src).await {
+            Ok(items) => items,
+            Err(e) => {
+                tracing::warn!(source=%src, err=%e, "news source failed");
+                Vec::new()
+            }
+        }
     }
 
     async fn fetch(&self, url: &str) -> Result<Vec<NewsItem>> {
@@ -100,13 +128,17 @@ fn strip_html(s: &str) -> String {
 
 /// Filter news to items that mention any roster player by name.
 pub fn relevant_to(items: &[NewsItem], player_names: &[String]) -> Vec<NewsItem> {
+    // Lowercase the names once, not once per (item × player).
+    let needles: Vec<String> = player_names
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_lowercase())
+        .collect();
     items
         .iter()
         .filter(|n| {
             let blob = format!("{} {}", n.title, n.summary).to_lowercase();
-            player_names
-                .iter()
-                .any(|p| !p.is_empty() && blob.contains(&p.to_lowercase()))
+            needles.iter().any(|p| blob.contains(p))
         })
         .cloned()
         .collect()

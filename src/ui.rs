@@ -123,6 +123,14 @@ impl App {
     }
 
     pub async fn run(mut self) -> Result<()> {
+        // A panic mid-session would otherwise leave the shell in raw mode on
+        // the alternate screen — restore the terminal before printing it.
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+            default_hook(info);
+        }));
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -146,8 +154,25 @@ impl App {
                     if key.kind != KeyEventKind::Press {
                         continue;
                     }
-                    if self.tab == Tab::Trade && self.handle_trade_key(key.code).await {
-                        continue;
+                    if self.tab == Tab::Trade {
+                        // Show "working…" before the (blocking) AI call starts.
+                        if matches!(key.code, KeyCode::Enter | KeyCode::F(2)) {
+                            self.status = "Asking Claude…".into();
+                            terminal.draw(|f| self.render(f))?;
+                        }
+                        if self.handle_trade_key(key.code).await {
+                            continue;
+                        }
+                    }
+                    // AI-backed actions block the loop for the duration of the
+                    // Sleeper + Claude calls — draw the status line first so
+                    // the user sees progress instead of a frozen frame.
+                    if matches!(
+                        key.code,
+                        KeyCode::Char('l') | KeyCode::Char('w') | KeyCode::Char('d')
+                    ) {
+                        self.status = "Asking Claude…".into();
+                        terminal.draw(|f| self.render(f))?;
                     }
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,

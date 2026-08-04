@@ -28,7 +28,7 @@ use parking_lot::RwLock;
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -210,13 +210,29 @@ pub struct ApiTrending {
 // Client
 // ---------------------------------------------------------------------------
 
+/// Full player DB: player_id → ApiPlayer.
+pub type PlayerDb = Arc<HashMap<String, ApiPlayer>>;
+/// Weekly projections: player_id → stat map (pts_ppr / pts_half_ppr / pts_std …).
+pub type ProjectionMap = Arc<HashMap<String, HashMap<String, f64>>>;
+
 pub struct SleeperClient {
     http: Client,
-    /// Cached full player DB (player_id → ApiPlayer).
-    players: Arc<RwLock<Option<Arc<HashMap<String, ApiPlayer>>>>>,
-    /// Cached weekly projections: (season, week) → player_id → fantasy pts by scoring.
-    projections: Arc<RwLock<HashMap<(String, u8), Arc<HashMap<String, HashMap<String, f64>>>>>>,
+    /// API base — `https://api.sleeper.app/v1`, overridable via
+    /// `SLEEPER_API_BASE` for tests/simulations against a mock server.
+    base: String,
+    /// Cached full player DB.
+    players: Arc<RwLock<Option<PlayerDb>>>,
+    /// Serializes the 5 MB player-DB download (single-flight).
+    players_fetch: Arc<tokio::sync::Mutex<()>>,
+    /// Cached weekly projections keyed by (season, week).
+    projections: Arc<RwLock<HashMap<(String, u8), ProjectionMap>>>,
     cache_dir: PathBuf,
+}
+
+/// Best-effort read of the on-disk player DB cache.
+fn read_player_cache(path: &Path) -> Option<HashMap<String, ApiPlayer>> {
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 impl SleeperClient {
@@ -225,23 +241,38 @@ impl SleeperClient {
             .timeout(Duration::from_secs(30))
             .user_agent("sleeper-agent/0.1 (+https://github.com/epicsurf5200/sleeper-agent)")
             .build()?;
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("sleeper-agent");
+        let cache_dir = match std::env::var("SA_CACHE_DIR") {
+            Ok(dir) => PathBuf::from(dir),
+            Err(_) => dirs::cache_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("sleeper-agent"),
+        };
+        let base = std::env::var("SLEEPER_API_BASE").unwrap_or_else(|_| BASE.to_string());
         Ok(Self {
             http,
+            base,
             players: Arc::new(RwLock::new(None)),
+            players_fetch: Arc::new(tokio::sync::Mutex::new(())),
             projections: Arc::new(RwLock::new(HashMap::new())),
             cache_dir,
         })
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
+        // URLs are formatted against the BASE const; swap in the override here
+        // (single point) rather than threading the base through every call site.
+        let url = if self.base == BASE {
+            url.to_string()
+        } else {
+            url.replacen(BASE, &self.base, 1)
+        };
+        let url = url.as_str();
         let resp = self.http.get(url).send().await?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("sleeper API {status} on {url}: {}", &body[..body.len().min(200)]));
+            let snippet: String = body.chars().take(200).collect();
+            return Err(anyhow!("sleeper API {status} on {url}: {snippet}"));
         }
         resp.json::<T>().await.with_context(|| format!("decoding {url}"))
     }
@@ -316,33 +347,50 @@ impl SleeperClient {
         if let Some(p) = self.players.read().clone() {
             return Ok(p);
         }
-        // try disk cache first
+        // Single-flight: without this, N concurrent cache misses would each
+        // download the 5 MB DB (Sleeper asks for at most one fetch per day).
+        let _guard = self.players_fetch.lock().await;
+        if let Some(p) = self.players.read().clone() {
+            return Ok(p); // another caller fetched while we waited
+        }
+
         let cache_file = self.cache_dir.join("players_nfl.json");
-        if let Ok(meta) = std::fs::metadata(&cache_file) {
-            let fresh = meta
-                .modified()
-                .ok()
-                .and_then(|t| t.elapsed().ok())
-                .map(|age| age.as_secs() < PLAYER_CACHE_TTL_SECS)
-                .unwrap_or(false);
-            if fresh {
-                if let Ok(bytes) = std::fs::read(&cache_file) {
-                    if let Ok(map) = serde_json::from_slice::<HashMap<String, ApiPlayer>>(&bytes) {
-                        let arc = Arc::new(map);
-                        *self.players.write() = Some(arc.clone());
-                        tracing::debug!("player DB loaded from disk cache");
-                        return Ok(arc);
-                    }
-                }
+        let fresh = std::fs::metadata(&cache_file)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .map(|age| age.as_secs() < PLAYER_CACHE_TTL_SECS)
+            .unwrap_or(false);
+        if fresh {
+            if let Some(map) = read_player_cache(&cache_file) {
+                let arc = Arc::new(map);
+                *self.players.write() = Some(arc.clone());
+                tracing::debug!("player DB loaded from disk cache");
+                return Ok(arc);
             }
         }
+
         tracing::info!("fetching full player DB from Sleeper (~5 MB, cached 24h)");
         let map: HashMap<String, ApiPlayer> =
-            self.get_json(&format!("{BASE}/players/nfl")).await?;
-        let _ = std::fs::create_dir_all(&self.cache_dir);
-        if let Ok(bytes) = serde_json::to_vec(&SerializablePlayers(&map)) {
-            let _ = std::fs::write(&cache_file, bytes);
-        }
+            match self.get_json(&format!("{BASE}/players/nfl")).await {
+                Ok(map) => {
+                    let _ = std::fs::create_dir_all(&self.cache_dir);
+                    if let Ok(bytes) = serde_json::to_vec(&SerializablePlayers(&map)) {
+                        let _ = std::fs::write(&cache_file, bytes);
+                    }
+                    map
+                }
+                Err(e) => {
+                    // Network down / API error: a stale cache beats no data.
+                    match read_player_cache(&cache_file) {
+                        Some(map) => {
+                            tracing::warn!(error=%e, "player DB fetch failed; using stale disk cache");
+                            map
+                        }
+                        None => return Err(e),
+                    }
+                }
+            };
         let arc = Arc::new(map);
         *self.players.write() = Some(arc.clone());
         Ok(arc)
@@ -433,7 +481,15 @@ pub struct LeagueSession {
     pub season: String,
     /// Scoring key into projection stat maps: pts_ppr / pts_half_ppr / pts_std.
     pub scoring_key: String,
+    /// Short-TTL cache of (rosters, team names, users) — many methods need
+    /// these, and one refresh cycle would otherwise hit the endpoints ~6×.
+    teams_cache: RwLock<Option<(std::time::Instant, Arc<TeamsSnapshot>)>>,
 }
+
+type TeamsSnapshot = (Vec<ApiRoster>, HashMap<u32, String>, Vec<ApiUser>);
+
+/// How long the rosters/users snapshot stays fresh.
+const TEAMS_CACHE_TTL: Duration = Duration::from_secs(60);
 
 impl LeagueSession {
     /// Resolve username → user_id, auto-discover the league when none is
@@ -447,12 +503,12 @@ impl LeagueSession {
         let user = client.user(username_or_id).await?;
         let leagues = client.user_leagues(&user.user_id, &state.season).await?;
         let league = match league_id {
-            Some(id) if !id.is_empty() => leagues
-                .iter()
-                .find(|l| l.league_id == id)
-                .cloned()
-                .or(Some(client.league(id).await?))
-                .unwrap(),
+            // NB: `.or(client.league(id).await?)` would evaluate (and fetch)
+            // eagerly even when the league was already found — match instead.
+            Some(id) if !id.is_empty() => match leagues.iter().find(|l| l.league_id == id) {
+                Some(l) => l.clone(),
+                None => client.league(id).await?,
+            },
             _ => leagues
                 .first()
                 .cloned()
@@ -465,6 +521,7 @@ impl LeagueSession {
             my_user_id: user.user_id,
             season: state.season,
             scoring_key,
+            teams_cache: RwLock::new(None),
         })
     }
 
@@ -555,7 +612,18 @@ impl LeagueSession {
         }
     }
 
-    async fn team_names(&self) -> Result<(Vec<ApiRoster>, HashMap<u32, String>, Vec<ApiUser>)> {
+    /// Drop the short-TTL rosters/users snapshot so the next call re-fetches.
+    /// Used by manual refresh paths and simulations that advance time quickly.
+    pub fn invalidate_team_cache(&self) {
+        *self.teams_cache.write() = None;
+    }
+
+    async fn team_names(&self) -> Result<TeamsSnapshot> {
+        if let Some((at, snap)) = self.teams_cache.read().clone() {
+            if at.elapsed() < TEAMS_CACHE_TTL {
+                return Ok((*snap).clone());
+            }
+        }
         let rosters = self.client.league_rosters(&self.league_id).await?;
         let users = self.client.league_users(&self.league_id).await?;
         let mut names = HashMap::new();
@@ -573,7 +641,9 @@ impl LeagueSession {
                 .unwrap_or_else(|| format!("Team {}", r.roster_id));
             names.insert(r.roster_id, name);
         }
-        Ok((rosters, names, users))
+        let snap: TeamsSnapshot = (rosters, names, users);
+        *self.teams_cache.write() = Some((std::time::Instant::now(), Arc::new(snap.clone())));
+        Ok(snap)
     }
 
     /// Build all rosters with projection-backed player points.
@@ -632,7 +702,7 @@ impl LeagueSession {
     }
 
     pub async fn my_roster(&self, week: u8) -> Result<Roster> {
-        let rosters = self.client.league_rosters(&self.league_id).await?;
+        let (rosters, _, _) = self.team_names().await?;
         let mine = rosters
             .iter()
             .find(|r| r.owner_id.as_deref() == Some(self.my_user_id.as_str()))
@@ -692,7 +762,7 @@ impl LeagueSession {
     /// Free agents at every position, projection-ranked.
     pub async fn free_agents(&self, position: Option<Position>, week: u8, limit: usize) -> Result<Vec<Player>> {
         let players = self.client.all_players().await?;
-        let rosters = self.client.league_rosters(&self.league_id).await?;
+        let (rosters, _, _) = self.team_names().await?;
         let proj = self.client.projections(&self.season, week).await.ok();
         let mut taken: HashSet<&str> = HashSet::new();
         for r in &rosters {
@@ -834,9 +904,20 @@ impl LeagueSession {
     pub async fn playoff_bracket(&self) -> Result<(Vec<BracketMatch>, Vec<BracketMatch>)> {
         let (_, names, _) = self.team_names().await?;
         let resolve = |v: &Option<serde_json::Value>| -> Option<String> {
-            v.as_ref()
-                .and_then(|x| x.as_u64())
-                .and_then(|rid| names.get(&(rid as u32)).cloned())
+            let v = v.as_ref()?;
+            if let Some(rid) = v.as_u64() {
+                return names.get(&(rid as u32)).cloned();
+            }
+            // Unresolved slots come as {"w": N} / {"l": N} — "winner/loser of match N".
+            if let Some(obj) = v.as_object() {
+                if let Some(m) = obj.get("w").and_then(|x| x.as_u64()) {
+                    return Some(format!("Winner of M{m}"));
+                }
+                if let Some(m) = obj.get("l").and_then(|x| x.as_u64()) {
+                    return Some(format!("Loser of M{m}"));
+                }
+            }
+            None
         };
         let convert = |raw: Vec<ApiBracketMatch>| -> Vec<BracketMatch> {
             raw.iter()
@@ -898,11 +979,29 @@ impl LeagueSession {
             })
             .collect();
         // On-the-clock team from draft_order + snake math.
-        let next_pick = pick_list.last().map(|p| p.pick_number + 1).unwrap_or(1);
-        let on_clock = draft.draft_order.as_ref().and_then(|order| {
+        // Don't assume the API returns picks sorted — take the max pick_no.
+        let next_pick = pick_list
+            .iter()
+            .map(|p| p.pick_number)
+            .max()
+            .map(|n| n + 1)
+            .unwrap_or(1);
+        // Third-round reversal: rounds >= reversal_round flip direction once
+        // more (round R repeats round R-1's direction, then snaking resumes).
+        let reversal = draft
+            .settings
+            .get("reversal_round")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let on_clock_user = draft.draft_order.as_ref().and_then(|order| {
             let idx0 = (next_pick - 1) % team_count.max(1);
             let round0 = (next_pick - 1) / team_count.max(1);
-            let slot = if round0 % 2 == 1 {
+            let parity = if reversal > 0 && round0 + 1 >= reversal {
+                (round0 + 1) % 2
+            } else {
+                round0 % 2
+            };
+            let slot = if parity == 1 {
                 team_count.saturating_sub(1).saturating_sub(idx0)
             } else {
                 idx0
@@ -910,13 +1009,17 @@ impl LeagueSession {
             order
                 .iter()
                 .find(|(_, s)| **s == slot)
-                .and_then(|(uid, _)| users.iter().find(|u| &u.user_id == uid))
-                .and_then(|u| u.display_name.clone())
+                .map(|(uid, _)| uid.clone())
         });
+        let on_clock = on_clock_user
+            .as_ref()
+            .and_then(|uid| users.iter().find(|u| &u.user_id == uid))
+            .and_then(|u| u.display_name.clone());
         Ok(DraftState {
             picks: pick_list,
             current_pick: next_pick,
             on_the_clock_team: on_clock,
+            on_the_clock_user_id: on_clock_user,
             total_rounds,
             team_count,
             completed: draft.status == "complete",

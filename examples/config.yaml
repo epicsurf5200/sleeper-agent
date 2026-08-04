@@ -2,9 +2,13 @@
 #
 # Only your Sleeper username is required — leagues are auto-discovered.
 # Run `sa leagues` to list them, then pin one here if you're in several.
+# Everything here is also editable in the GUI's Settings tab.
 
 anthropic:
   api_key: ""              # empty → read from $ANTHROPIC_API_KEY
+  backend: auto            # auto | api | claude-cli
+                           # auto: API when a key is set, otherwise the Claude Code
+                           # CLI (`claude -p`) using your Pro/Max subscription login
   model: claude-sonnet-4-6
   max_tokens: 2048
 
@@ -15,6 +19,29 @@ sleeper:
 settings:
   strategy: balanced       # conservative | balanced | high_stakes
   refresh_seconds: 900
+  context_files: []        # optional .md/.txt files injected into every AI prompt —
+                           # league special rules, keeper notes, personal preferences…
+                           # e.g. [league-rules.md, notes/keepers.md]
+                           # relative paths resolve against this config's directory
   news_sources:
     - https://www.espn.com/espn/rss/nfl/news
-    - https://api.sleeper.app/news/nfl/rss
+    - https://profootballtalk.nbcsports.com/feed/
+    - https://www.cbssports.com/rss/headlines/nfl/
+
+# Outbound alerts from `sa daemon`. An empty webhook_url disables them entirely.
+notify:
+  webhook_url: ""          # empty → read from $SA_WEBHOOK_URL
+                           # Discord: Server Settings → Integrations → Webhooks
+  format: discord          # discord (rich embed) | json (raw alert, for
+                           # Home Assistant / n8n / ntfy / anything custom)
+
+# Background monitoring — see deploy/README.md for running this on a server.
+daemon:
+  interval_minutes: 180    # how often to run a full AI analysis pass
+  active_hour_start: 8     # local time; nothing runs outside this window
+  active_hour_end: 23
+  triggers:
+    better_lineup: true    # AI lineup differs from the one you have set
+    injured_starter: true  # a starter is Out / Doubtful / IR / Suspended
+    waiver: true           # a free agent would upgrade a weak spot
+    trade: true            # concrete trade ideas against other rosters
