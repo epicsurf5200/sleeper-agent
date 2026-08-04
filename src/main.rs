@@ -72,6 +72,15 @@ enum Command {
         #[arg(long)]
         dry: bool,
     },
+    /// Run headless, analysing periodically and alerting via webhook.
+    Daemon {
+        /// Run one cycle and exit (useful for cron or verifying setup).
+        #[arg(long)]
+        once: bool,
+        /// Print alerts instead of sending them.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Show league-wide trending adds and drops (last 24h).
     Trending,
     /// Show recent league transactions (waivers, trades, FA moves).
@@ -189,6 +198,15 @@ async fn main() -> Result<()> {
         Command::Trade { partner, send, receive } => {
             cmd_trade(&session, &anthropic()?, &news_fetcher, &cfg, partner, send, receive).await
         }
+        Command::Daemon { once, dry_run } => {
+            daemon::run(
+                &cfg,
+                &session,
+                &anthropic()?,
+                daemon::DaemonArgs { once, dry_run },
+            )
+            .await
+        }
         Command::Trending => cmd_trending(&session).await,
         Command::Transactions { weeks } => cmd_transactions(&session, weeks).await,
         Command::Bracket => cmd_bracket(&session).await,
@@ -211,10 +229,7 @@ async fn run_gui(
     )));
     scheduler.spawn(session.clone(), news_fetcher.clone());
     let rt = tokio::runtime::Handle::current();
-    let strategy = cfg.settings.strategy;
-    tokio::task::block_in_place(move || {
-        gui::run(rt, session, anthropic, scheduler, strategy)
-    })
+    tokio::task::block_in_place(move || gui::run(rt, session, anthropic, scheduler, cfg))
 }
 
 #[cfg(not(feature = "gui"))]

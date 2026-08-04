@@ -51,6 +51,5 @@ async fn main() -> Result<()> {
     )));
     scheduler.spawn(session.clone(), news_fetcher.clone());
     let rt = tokio::runtime::Handle::current();
-    let strategy = cfg.settings.strategy;
-    tokio::task::block_in_place(move || gui::run(rt, session, anthropic, scheduler, strategy))
+    tokio::task::block_in_place(move || gui::run(rt, session, anthropic, scheduler, cfg))
 }

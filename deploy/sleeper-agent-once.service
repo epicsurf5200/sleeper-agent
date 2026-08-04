@@ -1,0 +1,27 @@
+[Unit]
+Description=sleeper-agent — one analysis cycle
+Documentation=https://github.com/epicsurf5200/sleeper-agent
+After=network-online.target
+Wants=network-online.target
+
+# Alternative to sleeper-agent.service: systemd does the scheduling and the
+# process exits between runs. Pair with sleeper-agent.timer. Note `--once`
+# deliberately ignores daemon.active_hour_* — an explicit single cycle is the
+# operator (or the timer) asking for one now, so put quiet hours in the timer's
+# OnCalendar instead.
+
+[Service]
+Type=oneshot
+User=sleeper
+Group=sleeper
+WorkingDirectory=/opt/sleeper-agent
+EnvironmentFile=/etc/sleeper-agent/sleeper-agent.env
+ExecStart=/opt/sleeper-agent/sa daemon --once
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+CacheDirectory=sleeper-agent
+ReadWritePaths=/var/cache/sleeper-agent

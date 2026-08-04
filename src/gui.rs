@@ -2,8 +2,10 @@
 
 use crate::anthropic::Anthropic;
 use crate::api::LeagueSession;
+use crate::config::Config;
 use crate::draft::{DraftManager, DraftSuggestion};
 use crate::lineup;
+use crate::notify::{Alert, AlertKind, Notifier};
 use crate::scheduler::{AppData, Scheduler};
 use crate::strategy::Strategy;
 use crate::trade::{self, TradeAnalysis};
@@ -24,6 +26,7 @@ enum Tab {
     Activity,
     Draft,
     News,
+    Settings,
 }
 
 const ALL_TABS: &[(Tab, &str)] = &[
@@ -35,6 +38,7 @@ const ALL_TABS: &[(Tab, &str)] = &[
     (Tab::Activity, "Activity"),
     (Tab::Draft, "Draft"),
     (Tab::News, "News"),
+    (Tab::Settings, "Settings"),
 ];
 
 pub struct GuiApp {
@@ -54,6 +58,12 @@ pub struct GuiApp {
     trade_send: String,
     trade_receive: String,
     logo_tex: Option<egui::TextureHandle>,
+    /// Live-editable copy of config.yaml backing the Settings tab.
+    cfg: Config,
+    /// Context files edited as one path per line, flattened back on save.
+    context_files_text: String,
+    leagues: Arc<Mutex<Vec<DiscoveredLeague>>>,
+    settings_msg: Arc<Mutex<String>>,
 }
 
 // Palette from the Claude-designed logo (assets/logo-mark.svg).
@@ -173,6 +183,7 @@ impl eframe::App for GuiApp {
             Tab::Activity => self.render_activity(ui),
             Tab::Draft => self.render_draft(ui, ctx),
             Tab::News => self.render_news(ui),
+            Tab::Settings => self.render_settings(ui, ctx),
         });
     }
 }
@@ -635,19 +646,264 @@ impl GuiApp {
     }
 }
 
+impl GuiApp {
+    fn render_settings(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.heading("Account");
+            ui.label(
+                egui::RichText::new(format!("Config file: {}", self.cfg.path.display()))
+                    .small()
+                    .weak(),
+            );
+            ui.add_space(4.0);
+
+            egui::Grid::new("account_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("Sleeper username");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.cfg.sleeper.username)
+                            .desired_width(220.0)
+                            .hint_text("your Sleeper username"),
+                    );
+                    if ui.button("Find leagues").clicked() {
+                        self.find_leagues(ctx);
+                    }
+                });
+                ui.end_row();
+
+                ui.label("League");
+                let leagues = self.leagues.lock().clone();
+                let selected = leagues
+                    .iter()
+                    .find(|l| l.league_id == self.cfg.sleeper.league_id)
+                    .map(|l| format!("{} ({} teams)", l.name, l.total_rosters))
+                    .unwrap_or_else(|| {
+                        if self.cfg.sleeper.league_id.is_empty() {
+                            "(auto-detect)".to_string()
+                        } else {
+                            self.cfg.sleeper.league_id.clone()
+                        }
+                    });
+                egui::ComboBox::from_id_salt("league_pick")
+                    .selected_text(selected)
+                    .width(300.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.cfg.sleeper.league_id,
+                            String::new(),
+                            "(auto-detect)",
+                        );
+                        for l in &leagues {
+                            ui.selectable_value(
+                                &mut self.cfg.sleeper.league_id,
+                                l.league_id.clone(),
+                                format!("{} — {} teams, {}", l.name, l.total_rosters, l.scoring),
+                            );
+                        }
+                    });
+                ui.end_row();
+
+                ui.label("Strategy");
+                egui::ComboBox::from_id_salt("settings_strategy")
+                    .selected_text(self.cfg.settings.strategy.label())
+                    .show_ui(ui, |ui| {
+                        for s in [Strategy::Conservative, Strategy::Balanced, Strategy::HighStakes]
+                        {
+                            ui.selectable_value(&mut self.cfg.settings.strategy, s, s.label());
+                        }
+                    });
+                ui.end_row();
+
+                ui.label("Refresh (seconds)");
+                ui.add(egui::DragValue::new(&mut self.cfg.settings.refresh_seconds).range(30..=7200));
+                ui.end_row();
+            });
+
+            ui.add_space(6.0);
+            ui.label("Context files (one path per line — league rules, keeper notes)");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.context_files_text)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3)
+                    .hint_text("league-rules.md"),
+            );
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.heading("Background monitoring");
+            ui.label(
+                egui::RichText::new(
+                    "Used by `sa daemon` — the headless service that watches your league and \
+                     pings you when something needs a decision.",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(4.0);
+
+            egui::Grid::new("daemon_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("Analysis every (minutes)");
+                ui.add(
+                    egui::DragValue::new(&mut self.cfg.daemon.interval_minutes).range(5..=1440),
+                );
+                ui.end_row();
+
+                ui.label("Active hours");
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut self.cfg.daemon.active_hour_start).range(0..=23));
+                    ui.label("to");
+                    ui.add(egui::DragValue::new(&mut self.cfg.daemon.active_hour_end).range(0..=23));
+                    ui.label(egui::RichText::new("(local time)").small().weak());
+                });
+                ui.end_row();
+
+                ui.label("Alert me about");
+                ui.vertical(|ui| {
+                    let t = &mut self.cfg.daemon.triggers;
+                    ui.checkbox(&mut t.better_lineup, "A better lineup is available");
+                    ui.checkbox(&mut t.injured_starter, "A starter is Out / Doubtful / IR");
+                    ui.checkbox(&mut t.waiver, "Waiver or free-agent upgrade");
+                    ui.checkbox(&mut t.trade, "Trade ideas");
+                });
+                ui.end_row();
+
+                ui.label("Webhook URL");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.cfg.notify.webhook_url)
+                        .desired_width(380.0)
+                        .hint_text("https://discord.com/api/webhooks/…"),
+                );
+                ui.end_row();
+
+                ui.label("Payload format");
+                ui.horizontal(|ui| {
+                    let is_json = self.cfg.notify.format.eq_ignore_ascii_case("json");
+                    if ui.selectable_label(!is_json, "Discord").clicked() {
+                        self.cfg.notify.format = "discord".into();
+                    }
+                    if ui.selectable_label(is_json, "Raw JSON").clicked() {
+                        self.cfg.notify.format = "json".into();
+                    }
+                });
+                ui.end_row();
+            });
+
+            if self.cfg.webhook_from_env {
+                ui.label(
+                    egui::RichText::new(
+                        "Webhook is set via SA_WEBHOOK_URL — it will not be written to config.yaml.",
+                    )
+                    .small()
+                    .color(BRAND_PURPLE),
+                );
+            }
+
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Save settings").clicked() {
+                    self.save_settings();
+                }
+                if ui.button("Send test notification").clicked() {
+                    self.send_test_notification(ctx);
+                }
+            });
+            ui.add_space(6.0);
+            let msg = self.settings_msg.lock().clone();
+            if !msg.is_empty() {
+                ui.label(egui::RichText::new(msg).color(BRAND_PURPLE));
+            }
+        });
+    }
+
+    fn save_settings(&mut self) {
+        self.cfg.settings.context_files = self
+            .context_files_text
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect();
+        // Keep the live strategy selector in sync with what was just saved.
+        self.strategy = self.cfg.settings.strategy;
+        match self.cfg.save() {
+            Ok(()) => {
+                *self.settings_msg.lock() = format!(
+                    "Saved to {}. Username, league and daemon changes take effect on restart.",
+                    self.cfg.path.display()
+                )
+            }
+            Err(e) => *self.settings_msg.lock() = format!("Save failed: {e}"),
+        }
+    }
+
+    fn find_leagues(&mut self, ctx: &egui::Context) {
+        let client = self.session.client.clone();
+        let username = self.cfg.sleeper.username.clone();
+        let leagues = self.leagues.clone();
+        let msg = self.settings_msg.clone();
+        let ctx = ctx.clone();
+        if username.trim().is_empty() {
+            *self.settings_msg.lock() = "Enter a Sleeper username first.".into();
+            return;
+        }
+        *self.settings_msg.lock() = format!("Looking up leagues for '{username}'…");
+        self.rt.spawn(async move {
+            match LeagueSession::discover_leagues(&client, &username).await {
+                Ok(found) => {
+                    *msg.lock() = if found.is_empty() {
+                        format!("No leagues found for '{username}'.")
+                    } else {
+                        format!("Found {} league(s) for '{username}'.", found.len())
+                    };
+                    *leagues.lock() = found;
+                }
+                Err(e) => *msg.lock() = format!("Lookup failed: {e}"),
+            }
+            ctx.request_repaint();
+        });
+    }
+
+    fn send_test_notification(&mut self, ctx: &egui::Context) {
+        let msg = self.settings_msg.clone();
+        let ctx = ctx.clone();
+        let notify_cfg = self.cfg.notify.clone();
+        self.rt.spawn(async move {
+            match Notifier::new(&notify_cfg) {
+                Ok(None) => *msg.lock() = "Set a webhook URL first.".into(),
+                Ok(Some(n)) => {
+                    let alert = Alert::new(
+                        AlertKind::Lineup,
+                        "Test notification",
+                        "If you can read this, sleeper-agent can reach your webhook.",
+                        "test",
+                    );
+                    *msg.lock() = match n.send(&alert).await {
+                        Ok(()) => "Test notification sent.".into(),
+                        Err(e) => format!("Send failed: {e}"),
+                    };
+                }
+                Err(e) => *msg.lock() = format!("Notifier error: {e}"),
+            }
+            ctx.request_repaint();
+        });
+    }
+}
+
 pub fn run(
     rt: tokio::runtime::Handle,
     session: Arc<LeagueSession>,
     anthropic: Anthropic,
     scheduler: Arc<Scheduler>,
-    strategy: Strategy,
+    cfg: Config,
 ) -> anyhow::Result<()> {
     let app = GuiApp {
         rt,
         session,
         anthropic: Arc::new(anthropic),
         scheduler,
-        strategy,
+        strategy: cfg.settings.strategy,
+        context_files_text: cfg.settings.context_files.join("\n"),
+        cfg,
         tab: Tab::Roster,
         status: Arc::new(Mutex::new("Background refresh running.".into())),
         lineup: Arc::new(Mutex::new(None)),
@@ -659,6 +915,8 @@ pub fn run(
         trade_send: String::new(),
         trade_receive: String::new(),
         logo_tex: None,
+        leagues: Arc::new(Mutex::new(Vec::new())),
+        settings_msg: Arc::new(Mutex::new(String::new())),
     };
     // App logo (assets/logo-mark.svg rasterized to PNG at build time).
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))

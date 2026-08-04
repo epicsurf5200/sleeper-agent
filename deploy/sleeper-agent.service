@@ -1,0 +1,48 @@
+[Unit]
+Description=sleeper-agent — periodic fantasy football analysis + alerts
+Documentation=https://github.com/epicsurf5200/sleeper-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sleeper
+Group=sleeper
+WorkingDirectory=/opt/sleeper-agent
+
+# Secrets and paths. Keep this file 0600 and owned by the service user — it
+# holds ANTHROPIC_API_KEY and SA_WEBHOOK_URL so config.yaml doesn't have to.
+EnvironmentFile=/etc/sleeper-agent/sleeper-agent.env
+
+ExecStart=/opt/sleeper-agent/sa daemon
+
+# `sa daemon` sleeps for daemon.interval_minutes internally, so this process is
+# meant to stay up. Restart on the transient failures a long-lived network
+# client hits (DNS blips, Sleeper 5xx at cycle boundaries).
+Restart=always
+RestartSec=60s
+
+# Hardening. The agent only needs outbound HTTPS, its cache dir, and its config.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Writable state: the player DB cache (~5 MB) and the alert-dedupe file.
+StateDirectory=sleeper-agent
+CacheDirectory=sleeper-agent
+ReadWritePaths=/var/cache/sleeper-agent
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

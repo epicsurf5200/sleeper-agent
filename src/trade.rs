@@ -108,6 +108,77 @@ pub async fn analyze(
     })
 }
 
+/// Propose trades rather than grade one. `analyze` needs you to already know
+/// what you want; the daemon does not, so this scans the league for
+/// complementary surpluses and asks Claude for concrete packages.
+pub async fn suggest(
+    anthropic: &Anthropic,
+    my_roster: &Roster,
+    other_rosters: &[Roster],
+    strategy: Strategy,
+    news: &[NewsItem],
+    max_ideas: usize,
+) -> Result<String> {
+    let others: Vec<&Roster> = other_rosters
+        .iter()
+        .filter(|r| r.team_id != my_roster.team_id)
+        .collect();
+    if others.is_empty() {
+        return Err(anyhow!("no other rosters to trade with"));
+    }
+
+    let system = format!(
+        "You are an autonomous fantasy football GM looking for trades that help \
+         my team. {}\n\
+         Only propose trades involving players actually listed on the named \
+         rosters. Prefer 2-for-1 or 1-for-1 deals that convert surplus depth \
+         into a starting upgrade. Be concrete and realistic — the other manager \
+         must plausibly say yes, so do not propose lopsided robbery.",
+        strategy.guidance()
+    );
+
+    let me = roster_block(my_roster, strategy);
+    let league = others
+        .iter()
+        .map(|r| roster_block(r, strategy))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let news_block = news
+        .iter()
+        .take(12)
+        .map(|n| format!("- [{}] {}", n.source, n.title))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let user = format!(
+        "=== MY TEAM ===\n{me}\n\n\
+         === OTHER ROSTERS ===\n{league}\n\n\
+         === RECENT NEWS ===\n{news}\n\n\
+         Identify my weakest starting spot and my deepest surplus, then propose \
+         up to {max_ideas} trades that fix the weakness. For each, use exactly:\n\
+         TRADE: <partner team>\n\
+         SEND: <my player(s), comma separated>\n\
+         RECEIVE: <their player(s), comma separated>\n\
+         WHY: <two sentences — why it helps me and why they would accept>\n\n\
+         If no trade is clearly worth making, reply with exactly: NO ACTION",
+        news = if news_block.is_empty() { "(none)".into() } else { news_block },
+    );
+    anthropic.complete(&system, &user).await
+}
+
+fn roster_block(roster: &Roster, strategy: Strategy) -> String {
+    let players = roster
+        .players
+        .iter()
+        .map(|p| format!("  - {}", PlayerMetrics::for_player(p, strategy).one_line()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "{} ({}-{}-{}, PF {:.0}):\n{}",
+        roster.team_name, roster.wins, roster.losses, roster.ties, roster.points_for, players
+    )
+}
+
 fn resolve_players(roster: &Roster, names: &[String]) -> Result<Vec<Player>, String> {
     let mut out = Vec::new();
     for name in names {
