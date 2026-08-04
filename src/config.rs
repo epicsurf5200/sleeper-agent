@@ -8,6 +8,10 @@ pub struct AnthropicConfig {
     /// API key. Falls back to ANTHROPIC_API_KEY env var when empty.
     #[serde(default)]
     pub api_key: String,
+    /// Backend: "auto" (default), "api", or "claude-cli".
+    /// auto → API when a key is set, otherwise the `claude` CLI (subscription auth).
+    #[serde(default)]
+    pub backend: String,
     #[serde(default = "default_model")]
     pub model: String,
     #[serde(default = "default_max_tokens")]
@@ -39,6 +43,11 @@ pub struct Settings {
     pub refresh_seconds: u64,
     #[serde(default = "default_news")]
     pub news_sources: Vec<String>,
+    /// Extra context files (.md/.txt — league special rules, keeper notes,
+    /// personal preferences, …) injected into every AI prompt.
+    /// Relative paths resolve against the config file's directory.
+    #[serde(default)]
+    pub context_files: Vec<String>,
 }
 
 fn default_refresh() -> u64 {
@@ -58,6 +67,7 @@ impl Default for Settings {
             strategy: Strategy::default(),
             refresh_seconds: default_refresh(),
             news_sources: default_news(),
+            context_files: Vec::new(),
         }
     }
 }
@@ -69,6 +79,9 @@ pub struct Config {
     pub sleeper: SleeperConfig,
     #[serde(default)]
     pub settings: Settings,
+    /// Directory the config was loaded from — anchors relative context_files.
+    #[serde(skip)]
+    pub base_dir: PathBuf,
 }
 
 impl Config {
@@ -83,7 +96,38 @@ impl Config {
                 cfg.anthropic.api_key = env;
             }
         }
+        cfg.base_dir = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
         Ok(cfg)
+    }
+
+    /// Read `settings.context_files` and bundle them into one block for AI
+    /// prompts. Returns None when no files are configured; errors on a
+    /// missing/unreadable file so typos don't get silently ignored.
+    pub fn load_context(&self) -> Result<Option<String>> {
+        if self.settings.context_files.is_empty() {
+            return Ok(None);
+        }
+        let mut out = String::from(
+            "ADDITIONAL LEAGUE CONTEXT (user-provided; treat as authoritative \
+             for league rules, scoring quirks, and preferences):\n",
+        );
+        for entry in &self.settings.context_files {
+            let p = Path::new(entry);
+            let resolved = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                self.base_dir.join(p)
+            };
+            let text = std::fs::read_to_string(&resolved)
+                .with_context(|| format!("reading context file {}", resolved.display()))?;
+            out.push_str(&format!("\n--- {} ---\n{}\n", entry, text.trim()));
+        }
+        Ok(Some(out))
     }
 
     pub fn default_path() -> PathBuf {

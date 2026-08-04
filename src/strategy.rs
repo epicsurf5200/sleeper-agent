@@ -1,18 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Strategy {
     Conservative,
+    #[default]
     Balanced,
     HighStakes,
-}
-
-impl Default for Strategy {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 impl FromStr for Strategy {

@@ -70,29 +70,62 @@ impl Scheduler {
     }
 }
 
+/// Record a fetch failure and yield None so the previous snapshot value is kept.
+fn keep<T>(res: anyhow::Result<T>, name: &str, errors: &mut Vec<String>) -> Option<T> {
+    match res {
+        Ok(v) => Some(v),
+        Err(e) => {
+            tracing::warn!(section = name, error = %e, "refresh section failed");
+            errors.push(format!("{name}: {e}"));
+            None
+        }
+    }
+}
+
 pub async fn refresh_once(
     session: &LeagueSession,
     news_fetcher: &NewsFetcher,
     data: &Arc<RwLock<AppData>>,
 ) -> anyhow::Result<()> {
-    let week = session.current_week().await.unwrap_or(1);
-    let settings = session.league_settings().await.ok();
-    let all_rosters = session.all_rosters(week).await.unwrap_or_default();
-    let roster = session.my_roster(week).await.ok();
-    let matchups = session.matchups(week).await.unwrap_or_default();
-    let transactions = session.recent_transactions(week, 3).await.unwrap_or_default();
-    let trending_add = session
-        .trending_players(TrendDirection::Add, 25)
-        .await
-        .unwrap_or_default();
-    let trending_drop = session
-        .trending_players(TrendDirection::Drop, 25)
-        .await
-        .unwrap_or_default();
-    let traded_picks = session.traded_picks().await.unwrap_or_default();
-    let (winners_bracket, losers_bracket) =
-        session.playoff_bracket().await.unwrap_or_default();
-    let draft = session.draft_state().await.ok();
+    let mut errors: Vec<String> = Vec::new();
+    let (prev_week, draft_done) = {
+        let g = data.read();
+        (
+            g.week,
+            g.draft.as_ref().map(|d| d.completed).unwrap_or(false),
+        )
+    };
+
+    let week_res = keep(session.current_week().await, "week", &mut errors);
+    let week = week_res.unwrap_or(if prev_week == 0 { 1 } else { prev_week });
+
+    let settings = keep(session.league_settings().await, "settings", &mut errors);
+    let all_rosters = keep(session.all_rosters(week).await, "rosters", &mut errors);
+    let roster = keep(session.my_roster(week).await, "my roster", &mut errors);
+    let matchups = keep(session.matchups(week).await, "matchups", &mut errors);
+    let transactions = keep(
+        session.recent_transactions(week, 3).await,
+        "transactions",
+        &mut errors,
+    );
+    let trending_add = keep(
+        session.trending_players(TrendDirection::Add, 25).await,
+        "trending adds",
+        &mut errors,
+    );
+    let trending_drop = keep(
+        session.trending_players(TrendDirection::Drop, 25).await,
+        "trending drops",
+        &mut errors,
+    );
+    let traded_picks = keep(session.traded_picks().await, "traded picks", &mut errors);
+    let brackets = keep(session.playoff_bracket().await, "brackets", &mut errors);
+    // A completed draft never changes — skip the (player-DB-heavy) re-fetch.
+    let draft = if draft_done {
+        None
+    } else {
+        keep(session.draft_state().await, "draft", &mut errors)
+    };
 
     let mut feed = news_fetcher.fetch_all(80).await;
     if let Some(r) = &roster {
@@ -103,21 +136,49 @@ pub async fn refresh_once(
         }
     }
 
+    // Transient failures keep the previous snapshot value rather than wiping
+    // the UI; the error string is surfaced via last_error.
     let mut g = data.write();
     g.week = week;
-    g.settings = settings;
-    g.roster = roster;
-    g.all_rosters = all_rosters;
-    g.matchups = matchups;
-    g.news = feed;
-    g.draft = draft;
-    g.transactions = transactions;
-    g.trending_add = trending_add;
-    g.trending_drop = trending_drop;
-    g.traded_picks = traded_picks;
-    g.winners_bracket = winners_bracket;
-    g.losers_bracket = losers_bracket;
+    if let Some(v) = settings {
+        g.settings = Some(v);
+    }
+    if let Some(v) = roster {
+        g.roster = Some(v);
+    }
+    if let Some(v) = all_rosters {
+        g.all_rosters = v;
+    }
+    if let Some(v) = matchups {
+        g.matchups = v;
+    }
+    if !feed.is_empty() {
+        g.news = feed;
+    }
+    if let Some(v) = draft {
+        g.draft = Some(v);
+    }
+    if let Some(v) = transactions {
+        g.transactions = v;
+    }
+    if let Some(v) = trending_add {
+        g.trending_add = v;
+    }
+    if let Some(v) = trending_drop {
+        g.trending_drop = v;
+    }
+    if let Some(v) = traded_picks {
+        g.traded_picks = v;
+    }
+    if let Some((w, l)) = brackets {
+        g.winners_bracket = w;
+        g.losers_bracket = l;
+    }
     g.last_refresh = Some(Instant::now());
-    g.last_error = None;
+    g.last_error = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
     Ok(())
 }

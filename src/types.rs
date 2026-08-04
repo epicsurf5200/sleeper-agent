@@ -17,6 +17,7 @@ pub enum Position {
 }
 
 impl Position {
+    #[allow(clippy::should_implement_trait)] // infallible by design, unlike FromStr
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().replace('/', "").as_str() {
             "QB" => Self::QB,
@@ -26,7 +27,8 @@ impl Position {
             "K" | "PK" => Self::K,
             "D" | "DEF" | "DST" | "DSTDEF" => Self::DST,
             "FLEX" | "RBWRTE" | "WRT" | "WRRBTE" => Self::FLEX,
-            "SUPERFLEX" | "SFLX" | "SUPER_FLEX" | "OP" => Self::SUPERFLEX,
+            // "SFLEX" is what our own Display emits — must round-trip.
+            "SUPERFLEX" | "SFLEX" | "SFLX" | "SUPER_FLEX" | "OP" => Self::SUPERFLEX,
             "BE" | "BN" | "BENCH" => Self::BENCH,
             "IR" => Self::IR,
             _ => Self::Unknown,
@@ -69,6 +71,7 @@ pub enum PlayerStatus {
 }
 
 impl PlayerStatus {
+    #[allow(clippy::should_implement_trait)] // infallible by design, unlike FromStr
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "ACTIVE" | "HEALTHY" | "" | "NORMAL" => Self::Healthy,
@@ -94,6 +97,29 @@ impl fmt::Display for PlayerStatus {
             Self::Unknown => "?",
         };
         f.write_str(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_display_round_trips_through_from_str() {
+        // The AI is shown slots via Display and echoes them back through
+        // from_str — every starter slot must survive the round trip.
+        for pos in [
+            Position::QB,
+            Position::RB,
+            Position::WR,
+            Position::TE,
+            Position::K,
+            Position::DST,
+            Position::FLEX,
+            Position::SUPERFLEX,
+        ] {
+            assert_eq!(Position::from_str(&pos.to_string()), pos, "{pos} round trip");
+        }
     }
 }
 
@@ -169,6 +195,9 @@ pub struct DraftState {
     pub picks: Vec<DraftPick>,
     pub current_pick: u32,
     pub on_the_clock_team: Option<String>,
+    /// Sleeper user_id of the drafter on the clock — use this (not the display
+    /// name) for "is it my turn" checks; team names can be customized.
+    pub on_the_clock_user_id: Option<String>,
     pub total_rounds: u32,
     pub team_count: u32,
     pub completed: bool,

@@ -6,7 +6,11 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 /// Adjust a player's projected points based on injury status and chosen strategy.
-pub fn risk_adjusted(player: &Player, strat: Strategy) -> f32 {
+/// `week` is the target week — a player on bye scores 0 no matter what.
+pub fn risk_adjusted(player: &Player, strat: Strategy, week: u8) -> f32 {
+    if week > 0 && player.bye_week == Some(week) {
+        return 0.0;
+    }
     let base = if player.projected_points > 0.0 {
         player.projected_points
     } else {
@@ -25,11 +29,16 @@ pub fn risk_adjusted(player: &Player, strat: Strategy) -> f32 {
 /// Greedy local optimizer that fills required slots in order, using
 /// risk-adjusted projections. Used as a deterministic fallback when the
 /// AI call fails or as a baseline shown alongside the AI recommendation.
-pub fn local_optimize(roster: &Roster, settings: &LeagueSettings, strat: Strategy) -> Lineup {
+pub fn local_optimize(
+    roster: &Roster,
+    settings: &LeagueSettings,
+    strat: Strategy,
+    week: u8,
+) -> Lineup {
     let mut available: Vec<&Player> = roster.players.iter().collect();
     available.sort_by(|a, b| {
-        risk_adjusted(b, strat)
-            .partial_cmp(&risk_adjusted(a, strat))
+        risk_adjusted(b, strat, week)
+            .partial_cmp(&risk_adjusted(a, strat, week))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -80,11 +89,11 @@ pub fn local_optimize(roster: &Roster, settings: &LeagueSettings, strat: Strateg
 
     let projected_total: f32 = starters
         .iter()
-        .filter_map(|s| s.player.as_ref().map(|p| risk_adjusted(p, strat)))
+        .filter_map(|s| s.player.as_ref().map(|p| risk_adjusted(p, strat, week)))
         .sum();
 
     Lineup {
-        week: 0,
+        week,
         starters,
         bench,
         projected_total,
@@ -107,8 +116,7 @@ pub async fn ai_optimize(
     strat: Strategy,
     week: u8,
 ) -> Result<Lineup> {
-    let mut local = local_optimize(roster, settings, strat);
-    local.week = week;
+    let local = local_optimize(roster, settings, strat, week);
 
     let system = format!(
         "You are an autonomous fantasy football manager. {}\n\
@@ -221,11 +229,19 @@ fn parse_ai_lineup(
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if let Some(r) = trimmed.strip_prefix("REASONING:") {
-            reasoning = r.trim().to_string();
+        // Tolerate markdown decoration around headers: "**REASONING:**", "## Lineup:".
+        let stripped = trimmed
+            .trim_start_matches(['#', '*', '-', '•', ' '])
+            .trim_end_matches('*');
+        let upper = stripped.to_uppercase();
+        if upper.starts_with("REASONING:") {
+            reasoning = stripped[stripped.find(':').map(|i| i + 1).unwrap_or(0)..]
+                .trim()
+                .trim_matches('*')
+                .to_string();
             continue;
         }
-        if trimmed.starts_with("LINEUP:") {
+        if upper.starts_with("LINEUP") {
             in_lineup = true;
             continue;
         }
@@ -236,10 +252,21 @@ fn parse_ai_lineup(
             }
             continue;
         }
-        if let Some((slot_str, name)) = trimmed.split_once(':') {
-            let slot = Position::from_str(slot_str.trim());
+        if let Some((slot_str, name)) = stripped.split_once(':') {
+            // Sanitize the slot token: strip list markers ("- RB", "1. WR"),
+            // markdown ("**RB**") and positional numbering ("RB1" → RB).
+            let slot_clean = slot_str
+                .trim()
+                .trim_start_matches(|c: char| {
+                    c.is_ascii_digit() || matches!(c, '-' | '•' | '*' | '.' | ')' | ' ')
+                })
+                .trim_matches('*')
+                .trim();
+            let slot_clean = slot_clean.trim_end_matches(|c: char| c.is_ascii_digit());
+            let slot = Position::from_str(slot_clean);
             if slot != Position::Unknown {
-                slot_assignments.push((slot, name.trim().trim_matches('*').to_string()));
+                let name = name.trim().trim_matches('*').trim().to_string();
+                slot_assignments.push((slot, name));
             }
         }
     }
@@ -258,15 +285,20 @@ fn parse_ai_lineup(
     let mut starters = Vec::new();
     for (slot, name) in slot_assignments {
         let needle = name.to_lowercase();
-        let resolved = by_name
-            .get(&needle)
-            .copied()
-            .or_else(|| {
-                roster
-                    .players
-                    .iter()
-                    .find(|p| p.name.to_lowercase().contains(&needle) || needle.contains(&p.name.to_lowercase()))
-            });
+        // An empty/near-empty needle would substring-match an arbitrary player.
+        let resolved = if needle.is_empty() || needle == "(empty)" || needle == "none" {
+            None
+        } else {
+            by_name.get(&needle).copied().or_else(|| {
+                if needle.len() < 4 {
+                    return None; // too short for a safe fuzzy match
+                }
+                roster.players.iter().find(|p| {
+                    p.name.to_lowercase().contains(&needle)
+                        || needle.contains(&p.name.to_lowercase())
+                })
+            })
+        };
         if let Some(p) = resolved {
             if !chosen.insert(p.id.clone()) {
                 continue;
@@ -282,7 +314,7 @@ fn parse_ai_lineup(
 
     let projected_total: f32 = starters
         .iter()
-        .filter_map(|s| s.player.as_ref().map(|p| risk_adjusted(p, strat)))
+        .filter_map(|s| s.player.as_ref().map(|p| risk_adjusted(p, strat, week)))
         .sum();
     let bench: Vec<Player> = roster
         .players
@@ -317,4 +349,92 @@ fn parse_ai_lineup(
         projected_total,
         reasoning,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn player(name: &str, pos: Position, proj: f32) -> Player {
+        Player {
+            id: name.to_lowercase().replace(' ', "_"),
+            name: name.to_string(),
+            position: pos,
+            roster_slot: Position::BENCH,
+            team: "SF".into(),
+            projected_points: proj,
+            avg_points: 0.0,
+            status: PlayerStatus::Healthy,
+            opponent: None,
+            bye_week: None,
+            news: vec![],
+        }
+    }
+
+    fn fixture() -> (Roster, LeagueSettings) {
+        let roster = Roster {
+            team_id: "1".into(),
+            team_name: "Testers".into(),
+            owner: None,
+            players: vec![
+                player("Josh Allen", Position::QB, 22.0),
+                player("Bijan Robinson", Position::RB, 18.0),
+                player("Amon-Ra St. Brown", Position::WR, 16.0),
+                player("Sam LaPorta", Position::TE, 11.0),
+            ],
+            wins: 0,
+            losses: 0,
+            ties: 0,
+            points_for: 0.0,
+            points_against: 0.0,
+        };
+        let settings = LeagueSettings {
+            scoring: "ppr".into(),
+            roster_slots: vec![
+                (Position::QB, 1),
+                (Position::RB, 1),
+                (Position::WR, 1),
+                (Position::TE, 1),
+            ],
+            team_count: 12,
+        };
+        (roster, settings)
+    }
+
+    #[test]
+    fn parses_plain_format() {
+        let (roster, settings) = fixture();
+        let text = "REASONING: start the studs.\nLINEUP:\nQB: Josh Allen\nRB: Bijan Robinson\nWR: Amon-Ra St. Brown\nTE: Sam LaPorta";
+        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced).unwrap();
+        assert_eq!(l.starters.len(), 4);
+        assert!(l.starters.iter().all(|s| s.player.is_some()));
+        assert_eq!(l.reasoning, "start the studs.");
+    }
+
+    #[test]
+    fn parses_markdown_decorated_format() {
+        let (roster, settings) = fixture();
+        // Markdown headers, bullets, bold slots, and RB1-style numbering.
+        let text = "**REASONING:** upside plays.\n**LINEUP:**\n- **QB:** Josh Allen\n- RB1: Bijan Robinson\n* WR1: Amon-Ra St. Brown\n- TE: Sam LaPorta";
+        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced).unwrap();
+        assert_eq!(l.starters.len(), 4);
+        assert!(l.starters.iter().all(|s| s.player.is_some()), "{:?}", l.starters);
+    }
+
+    #[test]
+    fn empty_name_does_not_match_arbitrary_player() {
+        let (roster, settings) = fixture();
+        let text = "REASONING: x\nLINEUP:\nQB: Josh Allen\nRB: Bijan Robinson\nWR:\nTE: Sam LaPorta";
+        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced).unwrap();
+        let wr = l.starters.iter().find(|s| s.slot == Position::WR).unwrap();
+        assert!(wr.player.is_none(), "empty WR name must resolve to no player");
+    }
+
+    #[test]
+    fn bye_week_player_scores_zero() {
+        let mut p = player("Bijan Robinson", Position::RB, 18.0);
+        p.bye_week = Some(5);
+        assert_eq!(risk_adjusted(&p, Strategy::Balanced, 5), 0.0);
+        assert!(risk_adjusted(&p, Strategy::Balanced, 6) > 0.0);
+    }
 }

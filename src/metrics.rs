@@ -69,7 +69,9 @@ impl PlayerMetrics {
         let ceiling = mean + variance * 1.4;
 
         // Trend uses (avg - projection) as a noisy signal of overperformance.
-        let trend = if mean > 0.0 {
+        // avg_points isn't populated yet (always 0), so without the guard this
+        // would read as a constant -1.0 "trending down" for every player.
+        let trend = if mean > 0.0 && p.avg_points > 0.0 {
             ((p.avg_points - p.projected_points) / mean).clamp(-1.0, 1.0)
         } else {
             0.0

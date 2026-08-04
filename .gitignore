@@ -23,3 +23,4 @@ league_data/
 *.log
 *.bak
 *.swp
+/league-rules.md

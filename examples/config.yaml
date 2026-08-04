@@ -5,6 +5,9 @@
 
 anthropic:
   api_key: ""              # empty → read from $ANTHROPIC_API_KEY
+  backend: auto            # auto | api | claude-cli
+                           # auto: API when a key is set, otherwise the Claude Code
+                           # CLI (`claude -p`) using your Pro/Max subscription login
   model: claude-sonnet-4-6
   max_tokens: 2048
 
@@ -15,6 +18,10 @@ sleeper:
 settings:
   strategy: balanced       # conservative | balanced | high_stakes
   refresh_seconds: 900
+  context_files: []        # optional .md/.txt files injected into every AI prompt —
+                           # league special rules, keeper notes, personal preferences…
+                           # e.g. [league-rules.md, notes/keepers.md]
+                           # relative paths resolve against this config's directory
   news_sources:
     - https://www.espn.com/espn/rss/nfl/news
     - https://api.sleeper.app/news/nfl/rss

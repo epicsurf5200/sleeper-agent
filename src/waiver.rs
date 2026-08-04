@@ -1,10 +1,11 @@
 //! Waiver analysis, Sleeper-native.
 //!
 //! Signals used per candidate:
-//!   - Sleeper weekly projections (real, not heuristic)
-//!   - League-wide trending adds/drops over the last 24h (community wisdom)
-//!   - Local PlayerMetrics (floor/ceiling/risk/strategy fit)
-//!   - Drop candidate at the same position from your roster
+//! - Sleeper weekly projections (real, not heuristic)
+//! - League-wide trending adds/drops over the last 24h (community wisdom)
+//! - Local PlayerMetrics (floor/ceiling/risk/strategy fit)
+//! - Drop candidate at the same position from your roster
+//!
 //! Claude then re-ranks the shortlist with news + recent league transactions.
 
 use crate::anthropic::Anthropic;
@@ -88,10 +89,15 @@ pub async fn analyze(
         .enumerate()
         .map(|(i, p)| {
             let m = PlayerMetrics::for_player(p, strategy);
+            // No incumbent at the position (e.g. pre-draft): compare against a
+            // conservative replacement baseline instead of crediting the full
+            // ROS value — otherwise position holes dominate the shortlist and
+            // cross-position scores stop being comparable.
+            let replacement_baseline = m.ros_value * 0.6;
             let upgrade = weakest_at
                 .get(&m.position)
                 .map(|idx| m.ros_value - roster_metrics[*idx].ros_value)
-                .unwrap_or(m.ros_value);
+                .unwrap_or(m.ros_value - replacement_baseline);
             let trend_boost = trending_counts
                 .get(p.id.as_str())
                 .map(|c| 1.0 + (*c as f32).ln_1p() / 10.0)
@@ -132,9 +138,12 @@ pub async fn analyze(
         })
         .collect();
 
-    let raw = ai_polish(anthropic, &roster, &candidates, news, &transactions, strategy)
-        .await
-        .unwrap_or_default();
+    // Surface AI failures instead of leaving the analysis silently empty.
+    let raw = match ai_polish(anthropic, &roster, &candidates, news, &transactions, strategy).await
+    {
+        Ok(text) => text,
+        Err(e) => format!("(AI analysis unavailable: {e})"),
+    };
 
     Ok(WaiverReport { candidates, raw })
 }

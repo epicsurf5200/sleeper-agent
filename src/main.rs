@@ -124,14 +124,17 @@ async fn main() -> Result<()> {
     let session = Arc::new(
         LeagueSession::connect(client.clone(), &cfg.sleeper.username, league_override).await?,
     );
-    let anthropic = anthropic::Anthropic::new(cfg.anthropic.clone())?;
+    // Only AI-backed commands need the Anthropic key — construct lazily.
+    let anthropic = || -> Result<anthropic::Anthropic> {
+        Ok(anthropic::Anthropic::new(cfg.anthropic.clone())?.with_context(cfg.load_context()?))
+    };
     let news_fetcher = Arc::new(news::NewsFetcher::new(cfg.settings.news_sources.clone())?);
 
     match cli.command.unwrap_or(Command::Ui) {
         Command::Ui => {
             ui::App::new(
                 session,
-                anthropic,
+                anthropic()?,
                 news_fetcher,
                 cfg.settings.strategy,
                 Duration::from_secs(cfg.settings.refresh_seconds),
@@ -139,20 +142,20 @@ async fn main() -> Result<()> {
             .run()
             .await
         }
-        Command::Gui => run_gui(session, anthropic, news_fetcher, cfg).await,
+        Command::Gui => run_gui(session, anthropic()?, news_fetcher, cfg).await,
         Command::Roster => cmd_roster(&session).await,
         Command::Info => cmd_info(&session).await,
-        Command::Lineup { week } => cmd_lineup(&session, &anthropic, &news_fetcher, &cfg, week).await,
-        Command::Waiver { pool } => cmd_waiver(&session, &anthropic, &news_fetcher, &cfg, pool).await,
+        Command::Lineup { week } => cmd_lineup(&session, &anthropic()?, &news_fetcher, &cfg, week).await,
+        Command::Waiver { pool } => cmd_waiver(&session, &anthropic()?, &news_fetcher, &cfg, pool).await,
         Command::Trade { partner, send, receive } => {
-            cmd_trade(&session, &anthropic, &news_fetcher, &cfg, partner, send, receive).await
+            cmd_trade(&session, &anthropic()?, &news_fetcher, &cfg, partner, send, receive).await
         }
         Command::Trending => cmd_trending(&session).await,
         Command::Transactions { weeks } => cmd_transactions(&session, weeks).await,
         Command::Bracket => cmd_bracket(&session).await,
         Command::TradedPicks => cmd_traded_picks(&session).await,
-        Command::Draft { interval } => cmd_draft_watch(&session, &anthropic, &news_fetcher, &cfg, interval).await,
-        Command::DraftSuggest => cmd_draft_suggest(&session, &anthropic, &news_fetcher, &cfg).await,
+        Command::Draft { interval } => cmd_draft_watch(&session, &anthropic()?, &news_fetcher, &cfg, interval).await,
+        Command::DraftSuggest => cmd_draft_suggest(&session, &anthropic()?, &news_fetcher, &cfg).await,
         Command::Leagues | Command::Init => unreachable!(),
     }
 }
@@ -323,8 +326,17 @@ async fn cmd_trade(
     let my_roster = session.my_roster(week).await?;
     let all = session.all_rosters(week).await?;
     let feed = news_fetcher.fetch_all(50).await;
-    let send_v: Vec<String> = send.split(',').map(|s| s.trim().to_string()).collect();
-    let recv_v: Vec<String> = receive.split(',').map(|s| s.trim().to_string()).collect();
+    // Filter empty tokens ("CMC," would otherwise substring-match anything).
+    let send_v: Vec<String> = send
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let recv_v: Vec<String> = receive
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     let a = trade::analyze(
         anthropic,
         &my_roster,
@@ -522,6 +534,8 @@ async fn cmd_draft_watch(
         roster.team_name,
         cfg.settings.strategy.label()
     );
+    // interval 0 would busy-loop against the Sleeper API.
+    let interval = interval.max(1);
     let mut last_pick = 0u32;
     let mut suggested_for = 0u32;
     loop {
@@ -531,17 +545,22 @@ async fn cmd_draft_watch(
                     println!("Draft complete.");
                     break;
                 }
-                if let Some(p) = state.picks.last() {
-                    if p.pick_number != last_pick {
-                        last_pick = p.pick_number;
-                        println!(
-                            "  R{}.{} {} → {}",
-                            p.round,
-                            p.pick_number,
-                            p.team_name,
-                            p.player_name.as_deref().unwrap_or("?")
-                        );
-                    }
+                // Print every pick made since the last poll, not just the latest.
+                let mut new_picks: Vec<&types::DraftPick> = state
+                    .picks
+                    .iter()
+                    .filter(|p| p.pick_number > last_pick)
+                    .collect();
+                new_picks.sort_by_key(|p| p.pick_number);
+                for p in new_picks {
+                    last_pick = p.pick_number;
+                    println!(
+                        "  R{}.{} {} → {}",
+                        p.round,
+                        p.pick_number,
+                        p.team_name,
+                        p.player_name.as_deref().unwrap_or("?")
+                    );
                 }
                 if dm.is_my_turn(&state) && state.current_pick != suggested_for {
                     suggested_for = state.current_pick;

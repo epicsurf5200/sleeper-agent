@@ -20,6 +20,7 @@ pub struct TradeAnalysis {
     pub ai_summary: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn analyze(
     anthropic: &Anthropic,
     my_roster: &Roster,
@@ -32,18 +33,23 @@ pub async fn analyze(
 ) -> Result<TradeAnalysis> {
     let send = resolve_players(my_roster, send_names)
         .map_err(|missing| anyhow!("send player not found on your roster: {missing}"))?;
+    // `other_rosters` typically includes our own team — never trade with ourselves.
     let partner = other_rosters
         .iter()
+        .filter(|r| r.team_id != my_roster.team_id)
         .find(|r| r.team_name.eq_ignore_ascii_case(partner_team))
         .or_else(|| {
             // fall back: any team containing the receive players
-            other_rosters.iter().find(|r| {
-                receive_names.iter().all(|n| {
-                    r.players
-                        .iter()
-                        .any(|p| p.name.eq_ignore_ascii_case(n))
+            other_rosters
+                .iter()
+                .filter(|r| r.team_id != my_roster.team_id)
+                .find(|r| {
+                    receive_names.iter().all(|n| {
+                        r.players
+                            .iter()
+                            .any(|p| p.name.eq_ignore_ascii_case(n))
+                    })
                 })
-            })
         })
         .ok_or_else(|| anyhow!("partner team '{partner_team}' not found"))?;
     let receive = resolve_players(partner, receive_names).map_err(|missing| {
@@ -87,7 +93,8 @@ pub async fn analyze(
         news,
     )
     .await
-    .unwrap_or_default();
+    // Surface AI failures instead of leaving the summary silently empty.
+    .unwrap_or_else(|e| format!("(AI analysis unavailable: {e})"));
 
     Ok(TradeAnalysis {
         send: send_metrics,
@@ -105,10 +112,14 @@ fn resolve_players(roster: &Roster, names: &[String]) -> Result<Vec<Player>, Str
     let mut out = Vec::new();
     for name in names {
         let needle = name.to_lowercase();
+        if needle.is_empty() {
+            // An empty needle would substring-match the first roster player.
+            return Err(name.clone());
+        }
         let found = roster.players.iter().find(|p| {
             p.name.eq_ignore_ascii_case(name)
                 || p.name.to_lowercase().contains(&needle)
-                || needle.contains(&p.name.to_lowercase())
+                || (needle.len() >= 4 && needle.contains(&p.name.to_lowercase()))
         });
         match found {
             Some(p) => out.push(p.clone()),

@@ -36,6 +36,11 @@ impl<'a> DraftManager<'a> {
     }
 
     pub fn is_my_turn(&self, state: &DraftState) -> bool {
+        // Prefer the user_id: team names can be customized, so display-name
+        // comparison fails for any manager with a custom team name.
+        if let Some(uid) = state.on_the_clock_user_id.as_deref() {
+            return uid == self.session.my_user_id;
+        }
         state
             .on_the_clock_team
             .as_deref()
@@ -62,7 +67,6 @@ impl<'a> DraftManager<'a> {
             .iter()
             .filter_map(|p| p.player_name.as_ref().map(|n| n.to_lowercase()))
             .collect();
-        let _ = &drafted; // names included below; Claude told not to repeat
 
         let my_picks: Vec<&DraftPick> = state
             .picks
@@ -131,10 +135,12 @@ impl<'a> DraftManager<'a> {
         );
 
         let raw = self.anthropic.complete(&system, &user).await?;
-        Ok(DraftSuggestion {
-            picks: parse_suggestions(&raw),
-            raw,
-        })
+        // Belt-and-suspenders: never surface a player who's already off the board.
+        let picks = parse_suggestions(&raw)
+            .into_iter()
+            .filter(|s| !drafted.contains(&s.name.to_lowercase()))
+            .collect();
+        Ok(DraftSuggestion { picks, raw })
     }
 }
 
@@ -155,7 +161,14 @@ fn parse_suggestions(text: &str) -> Vec<SuggestedPick> {
             .and_then(|c| c.to_digit(10))
             .unwrap_or(0);
         let rest = rest.trim();
-        let (name_part, rationale) = match rest.split_once('—').or_else(|| rest.split_once('-')) {
+        // Split name from rationale on a *space-delimited* dash only — a bare
+        // '-' split would cut hyphenated names like "Amon-Ra St. Brown".
+        let (name_part, rationale) = match rest
+            .split_once(" — ")
+            .or_else(|| rest.split_once(" – "))
+            .or_else(|| rest.split_once(" - "))
+            .or_else(|| rest.split_once('—'))
+        {
             Some((n, r)) => (n.trim().to_string(), r.trim().to_string()),
             None => (rest.to_string(), String::new()),
         };
@@ -177,4 +190,19 @@ fn parse_suggestions(text: &str) -> Vec<SuggestedPick> {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hyphenated_names_survive_plain_dash_separator() {
+        let picks =
+            parse_suggestions("1. Amon-Ra St. Brown (WR) - elite target share\n2. Ja'Marr Chase (WR) — WR1 upside");
+        assert_eq!(picks.len(), 2);
+        assert_eq!(picks[0].name, "Amon-Ra St. Brown");
+        assert_eq!(picks[0].rationale, "elite target share");
+        assert_eq!(picks[1].name, "Ja'Marr Chase");
+    }
 }

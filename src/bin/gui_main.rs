@@ -43,7 +43,8 @@ async fn main() -> Result<()> {
     let session = Arc::new(
         LeagueSession::connect(client, &cfg.sleeper.username, league_override).await?,
     );
-    let anthropic = anthropic::Anthropic::new(cfg.anthropic.clone())?;
+    let anthropic =
+        anthropic::Anthropic::new(cfg.anthropic.clone())?.with_context(cfg.load_context()?);
     let news_fetcher = Arc::new(news::NewsFetcher::new(cfg.settings.news_sources.clone())?);
     let scheduler = Arc::new(scheduler::Scheduler::new(Duration::from_secs(
         cfg.settings.refresh_seconds,
