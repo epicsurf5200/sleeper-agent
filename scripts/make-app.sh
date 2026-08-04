@@ -17,9 +17,10 @@ cargo build --release --features gui --manifest-path "$REPO/Cargo.toml"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$REPO/target/release/sa-gui" "$APP/Contents/MacOS/sa-gui"
+cp "$REPO/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/MacOS/launcher" <<'EOF'
 #!/bin/bash
@@ -44,6 +45,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <key>CFBundleVersion</key>         <string>0.1.0</string>
     <key>CFBundleShortVersionString</key> <string>0.1.0</string>
     <key>CFBundleExecutable</key>      <string>launcher</string>
+    <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>

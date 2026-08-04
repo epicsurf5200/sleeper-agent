@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo-lockup.svg" alt="SLEEPER AGENT" width="320">
+</p>
+
 # sleeper-agent
 
 > *An agent for Sleeper. A sleeper agent for your league.*

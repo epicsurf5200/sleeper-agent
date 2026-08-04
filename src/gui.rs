@@ -600,10 +600,18 @@ pub fn run(
         trade_send: String::new(),
         trade_receive: String::new(),
     };
+    // App logo (assets/logo-mark.svg rasterized to PNG at build time).
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
+        .ok()
+        .map(std::sync::Arc::new);
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1150.0, 740.0])
+        .with_title("sleeper-agent");
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1150.0, 740.0])
-            .with_title("sleeper-agent"),
+        viewport,
         ..Default::default()
     };
     eframe::run_native("sleeper-agent", options, Box::new(|_cc| Ok(Box::new(app))))

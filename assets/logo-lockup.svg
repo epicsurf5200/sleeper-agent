@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="52" viewBox="0 0 200 52" role="img" aria-label="SLEEPER AGENT">
+  <g transform="translate(2,2)">
+    <path d="M24 6.5 C31.5 10 39.5 17.5 39.5 24 C39.5 30.5 31.5 38 24 41.5 C16.5 38 8.5 30.5 8.5 24 C8.5 17.5 16.5 10 24 6.5 Z" fill="#232532" stroke="#4a4d5a" stroke-width="1"></path>
+    <path d="M24 6.5 C31.5 10 39.5 17.5 39.5 24 C36 25.6 30 26.4 24 24 Z" fill="#2b2d3a"></path>
+    <g stroke="#9184d9" stroke-width="1.8" stroke-linecap="round">
+      <path d="M24 14 L24 34"></path>
+      <path d="M20.4 18 L27.6 18"></path>
+      <path d="M20.4 22 L27.6 22"></path>
+      <path d="M20.4 26 L27.6 26"></path>
+      <path d="M20.4 30 L27.6 30"></path>
+    </g>
+  </g>
+  <text x="56" y="24" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="500" letter-spacing="2.7" fill="#e9e9ed">SLEEPER</text>
+  <text x="56" y="42" font-family="Inter, system-ui, sans-serif" font-size="15" font-weight="500" letter-spacing="2.7" fill="#9184d9">AGENT</text>
+</svg>
