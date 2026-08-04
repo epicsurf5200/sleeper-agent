@@ -54,6 +54,18 @@ enum Command {
         #[arg(short, long)]
         receive: String,
     },
+    /// Backtest the AI manager against a real historical season.
+    Backtest {
+        /// Season to replay (e.g. 2025).
+        #[arg(long, default_value = "2025")]
+        season: String,
+        /// Number of weeks to replay.
+        #[arg(long, default_value_t = 14)]
+        weeks: u8,
+        /// Draft slot (1-12) for the backtested team.
+        #[arg(long, default_value_t = 5)]
+        slot: usize,
+    },
     /// Show league-wide trending adds and drops (last 24h).
     Trending,
     /// Show recent league transactions (waivers, trades, FA moves).
@@ -102,6 +114,23 @@ async fn main() -> Result<()> {
     }
 
     let client = Arc::new(SleeperClient::new()?);
+
+    // `backtest` needs no league — handle before full connect.
+    if let Some(Command::Backtest { season, weeks, slot }) = &cli.command {
+        let anthropic = anthropic::Anthropic::new(cfg.anthropic.clone())?
+            .with_context(cfg.load_context()?);
+        return backtest::run(
+            &client,
+            &anthropic,
+            backtest::BacktestArgs {
+                season: season.clone(),
+                weeks: *weeks,
+                slot: *slot,
+                strategy: cfg.settings.strategy,
+            },
+        )
+        .await;
+    }
 
     // `leagues` only needs the username — handle before full connect.
     if let Some(Command::Leagues) = &cli.command {
@@ -156,7 +185,7 @@ async fn main() -> Result<()> {
         Command::TradedPicks => cmd_traded_picks(&session).await,
         Command::Draft { interval } => cmd_draft_watch(&session, &anthropic()?, &news_fetcher, &cfg, interval).await,
         Command::DraftSuggest => cmd_draft_suggest(&session, &anthropic()?, &news_fetcher, &cfg).await,
-        Command::Leagues | Command::Init => unreachable!(),
+        Command::Leagues | Command::Init | Command::Backtest { .. } => unreachable!(),
     }
 }
 

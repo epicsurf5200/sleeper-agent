@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod api;
+pub mod backtest;
 pub mod config;
 pub mod draft;
 #[cfg(feature = "gui")]
