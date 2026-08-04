@@ -9,6 +9,14 @@ use tokio::io::AsyncWriteExt;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 
+/// Messages endpoint — overridable via ANTHROPIC_BASE_URL for tests/mocks.
+fn api_url() -> String {
+    match std::env::var("ANTHROPIC_BASE_URL") {
+        Ok(base) => format!("{}/v1/messages", base.trim_end_matches('/')),
+        Err(_) => API_URL.to_string(),
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct MessagesRequest<'a> {
     model: &'a str,
@@ -176,7 +184,7 @@ impl Anthropic {
 
         let resp = self
             .http
-            .post(API_URL)
+            .post(api_url())
             .header("x-api-key", &self.cfg.api_key)
             .header("anthropic-version", API_VERSION)
             .header("content-type", "application/json")

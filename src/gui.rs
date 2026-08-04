@@ -114,9 +114,7 @@ impl eframe::App for GuiApp {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if let Some(tex) = &logo {
-                    ui.add(
-                        egui::Image::new(&*tex).fit_to_exact_size(egui::vec2(28.0, 28.0)),
-                    );
+                    ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(28.0, 28.0)));
                 }
                 ui.label(
                     egui::RichText::new("SLEEPER")

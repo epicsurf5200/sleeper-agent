@@ -217,6 +217,9 @@ pub type ProjectionMap = Arc<HashMap<String, HashMap<String, f64>>>;
 
 pub struct SleeperClient {
     http: Client,
+    /// API base — `https://api.sleeper.app/v1`, overridable via
+    /// `SLEEPER_API_BASE` for tests/simulations against a mock server.
+    base: String,
     /// Cached full player DB.
     players: Arc<RwLock<Option<PlayerDb>>>,
     /// Serializes the 5 MB player-DB download (single-flight).
@@ -238,11 +241,16 @@ impl SleeperClient {
             .timeout(Duration::from_secs(30))
             .user_agent("sleeper-agent/0.1 (+https://github.com/epicsurf5200/sleeper-agent)")
             .build()?;
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("sleeper-agent");
+        let cache_dir = match std::env::var("SA_CACHE_DIR") {
+            Ok(dir) => PathBuf::from(dir),
+            Err(_) => dirs::cache_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("sleeper-agent"),
+        };
+        let base = std::env::var("SLEEPER_API_BASE").unwrap_or_else(|_| BASE.to_string());
         Ok(Self {
             http,
+            base,
             players: Arc::new(RwLock::new(None)),
             players_fetch: Arc::new(tokio::sync::Mutex::new(())),
             projections: Arc::new(RwLock::new(HashMap::new())),
@@ -251,6 +259,14 @@ impl SleeperClient {
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T> {
+        // URLs are formatted against the BASE const; swap in the override here
+        // (single point) rather than threading the base through every call site.
+        let url = if self.base == BASE {
+            url.to_string()
+        } else {
+            url.replacen(BASE, &self.base, 1)
+        };
+        let url = url.as_str();
         let resp = self.http.get(url).send().await?;
         let status = resp.status();
         if !status.is_success() {
@@ -594,6 +610,12 @@ impl LeagueSession {
             bye_week: None,
             news,
         }
+    }
+
+    /// Drop the short-TTL rosters/users snapshot so the next call re-fetches.
+    /// Used by manual refresh paths and simulations that advance time quickly.
+    pub fn invalidate_team_cache(&self) {
+        *self.teams_cache.write() = None;
     }
 
     async fn team_names(&self) -> Result<TeamsSnapshot> {
