@@ -7,7 +7,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$HOME/Applications/Sleeper Agent.app"
+APP="/Applications/Sleeper Agent.app"
+[ -d "$APP" ] || APP="$HOME/Applications/Sleeper Agent.app"
 
 case "${1:-}" in
     --tui)

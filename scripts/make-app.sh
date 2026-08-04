@@ -1,15 +1,21 @@
 #!/bin/bash
 # Build a double-clickable macOS app bundle for the sleeper-agent GUI.
 #
-#   ./scripts/make-app.sh              → installs "Sleeper Agent.app" in ~/Applications
-#   ./scripts/make-app.sh /Applications → install elsewhere
+#   ./scripts/make-app.sh              → installs "Sleeper Agent.app" in /Applications
+#   ./scripts/make-app.sh ~/Applications → install elsewhere
 #
 # The launcher extends PATH so the `claude` CLI (subscription auth) is found
 # when launched from Finder/Dock, and logs to ~/Library/Logs/sleeper-agent.log.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-DEST="${1:-$HOME/Applications}"
+# /Applications gets indexed by Spotlight/Launchpad; ~/Applications often isn't.
+DEST="${1:-/Applications}"
+if [ ! -w "$DEST" ]; then
+    echo "!! $DEST not writable — falling back to ~/Applications"
+    DEST="$HOME/Applications"
+    mkdir -p "$DEST"
+fi
 APP="$DEST/Sleeper Agent.app"
 
 echo "==> Building release GUI binary"
