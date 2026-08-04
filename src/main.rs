@@ -68,6 +68,9 @@ enum Command {
         /// Override the Claude model for this run (e.g. claude-opus-4-8).
         #[arg(long)]
         model: Option<String>,
+        /// Skip AI calls; sweep the form-blend weight to size the headroom.
+        #[arg(long)]
+        dry: bool,
     },
     /// Show league-wide trending adds and drops (last 24h).
     Trending,
@@ -119,7 +122,7 @@ async fn main() -> Result<()> {
     let client = Arc::new(SleeperClient::new()?);
 
     // `backtest` needs no league — handle before full connect.
-    if let Some(Command::Backtest { season, weeks, slot, model }) = &cli.command {
+    if let Some(Command::Backtest { season, weeks, slot, model, dry }) = &cli.command {
         let mut acfg = cfg.anthropic.clone();
         if let Some(m) = model {
             acfg.model = m.clone();
@@ -133,6 +136,7 @@ async fn main() -> Result<()> {
                 weeks: *weeks,
                 slot: *slot,
                 strategy: cfg.settings.strategy,
+                dry: *dry,
             },
         )
         .await;

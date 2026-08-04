@@ -140,9 +140,15 @@ pub async fn ai_optimize(
         .players
         .iter()
         .map(|p| {
+            let bye = if p.bye_week == Some(week) { "  [ON BYE]" } else { "" };
+            let form = if p.avg_points > 0.0 {
+                format!(" form={:.1}", p.avg_points)
+            } else {
+                String::new()
+            };
             format!(
-                "- {} ({} {}) status={} proj={:.1} avg={:.1}",
-                p.name, p.position, p.team, p.status, p.projected_points, p.avg_points
+                "- {} ({} {}) status={} proj={:.1}{}{}",
+                p.name, p.position, p.team, p.status, p.projected_points, form, bye
             )
         })
         .collect::<Vec<_>>()
@@ -174,6 +180,13 @@ pub async fn ai_optimize(
          === ROSTER ===\n{roster_block}\n\n\
          === RECENT NEWS ===\n{news_block}\n\n\
          === LOCAL BASELINE (greedy by risk-adjusted projection) ===\n{baseline}\n\n\
+         The baseline ranks by this week's consensus projection ALONE. You also see \
+         `form` (trailing actual points per game this season), bye flags, injury \
+         status and any news above. Consensus projections already price in most of \
+         what `form` reflects, and small-sample form is noisy — so override the \
+         baseline only when you have a concrete reason (a bye, an injury, a clear \
+         role change), not merely because a bench player has been hot. An unforced \
+         swap that does not pay off is a real cost.\n\n\
          Respond in this exact format:\n\
          REASONING: <one paragraph>\n\
          LINEUP:\n\
@@ -183,8 +196,13 @@ pub async fn ai_optimize(
         baseline = format_lineup(&local),
     );
 
+    // An AI lineup that fields fewer players than the greedy baseline is
+    // strictly worse — an unfilled starter slot forfeits those points. Treat
+    // it as a parse failure rather than quietly starting nobody.
+    let min_filled = local.starters.iter().filter(|s| s.player.is_some()).count();
+
     match client.complete(&system, &user).await {
-        Ok(text) => Ok(parse_ai_lineup(&text, roster, settings, week, strat)
+        Ok(text) => Ok(parse_ai_lineup(&text, roster, settings, week, strat, min_filled)
             .unwrap_or_else(|e| {
                 tracing::warn!(error=%e, "failed to parse AI lineup, using local fallback");
                 Lineup {
@@ -222,6 +240,7 @@ fn parse_ai_lineup(
     settings: &LeagueSettings,
     week: u8,
     strat: Strategy,
+    min_filled: usize,
 ) -> Result<Lineup> {
     let mut reasoning = String::new();
     let mut slot_assignments: Vec<(Position, String)> = Vec::new();
@@ -342,6 +361,14 @@ fn parse_ai_lineup(
         );
     }
 
+    let filled = starters.iter().filter(|s| s.player.is_some()).count();
+    if filled < min_filled {
+        anyhow::bail!(
+            "AI left {} starter slot(s) unfilled (fielded {filled}, baseline fields {min_filled})",
+            min_filled - filled
+        );
+    }
+
     Ok(Lineup {
         week,
         starters,
@@ -405,7 +432,7 @@ mod tests {
     fn parses_plain_format() {
         let (roster, settings) = fixture();
         let text = "REASONING: start the studs.\nLINEUP:\nQB: Josh Allen\nRB: Bijan Robinson\nWR: Amon-Ra St. Brown\nTE: Sam LaPorta";
-        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced).unwrap();
+        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced, 4).unwrap();
         assert_eq!(l.starters.len(), 4);
         assert!(l.starters.iter().all(|s| s.player.is_some()));
         assert_eq!(l.reasoning, "start the studs.");
@@ -416,7 +443,7 @@ mod tests {
         let (roster, settings) = fixture();
         // Markdown headers, bullets, bold slots, and RB1-style numbering.
         let text = "**REASONING:** upside plays.\n**LINEUP:**\n- **QB:** Josh Allen\n- RB1: Bijan Robinson\n* WR1: Amon-Ra St. Brown\n- TE: Sam LaPorta";
-        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced).unwrap();
+        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced, 4).unwrap();
         assert_eq!(l.starters.len(), 4);
         assert!(l.starters.iter().all(|s| s.player.is_some()), "{:?}", l.starters);
     }
@@ -425,9 +452,22 @@ mod tests {
     fn empty_name_does_not_match_arbitrary_player() {
         let (roster, settings) = fixture();
         let text = "REASONING: x\nLINEUP:\nQB: Josh Allen\nRB: Bijan Robinson\nWR:\nTE: Sam LaPorta";
-        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced).unwrap();
+        // min_filled=0 isolates name resolution from the unfilled-slot guard.
+        let l = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced, 0).unwrap();
         let wr = l.starters.iter().find(|s| s.slot == Position::WR).unwrap();
         assert!(wr.player.is_none(), "empty WR name must resolve to no player");
+    }
+
+    #[test]
+    fn unfilled_starter_slot_is_rejected() {
+        let (roster, settings) = fixture();
+        // An unresolvable name forfeits a starter slot — strictly worse than
+        // the greedy baseline, which fields all four. Must not be accepted.
+        let text =
+            "REASONING: x\nLINEUP:\nQB: Josh Allen\nRB: Bijan Robinson\nWR: Nonexistent Guy\nTE: Sam LaPorta";
+        let err = parse_ai_lineup(text, &roster, &settings, 1, Strategy::Balanced, 4)
+            .expect_err("lineup fielding 3 of 4 slots must be rejected");
+        assert!(err.to_string().contains("unfilled"), "got: {err}");
     }
 
     #[test]
