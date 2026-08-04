@@ -53,6 +53,33 @@ pub struct GuiApp {
     trade_partner: String,
     trade_send: String,
     trade_receive: String,
+    logo_tex: Option<egui::TextureHandle>,
+}
+
+// Palette from the Claude-designed logo (assets/logo-mark.svg).
+const BRAND_BG: egui::Color32 = egui::Color32::from_rgb(0x23, 0x25, 0x32);
+const BRAND_BG_LIGHT: egui::Color32 = egui::Color32::from_rgb(0x2b, 0x2d, 0x3a);
+const BRAND_STROKE: egui::Color32 = egui::Color32::from_rgb(0x4a, 0x4d, 0x5a);
+const BRAND_PURPLE: egui::Color32 = egui::Color32::from_rgb(0x91, 0x84, 0xd9);
+const BRAND_TEXT: egui::Color32 = egui::Color32::from_rgb(0xe9, 0xe9, 0xed);
+
+/// Dark theme matching the logo palette.
+pub fn brand_visuals() -> egui::Visuals {
+    let mut v = egui::Visuals::dark();
+    v.panel_fill = BRAND_BG;
+    v.window_fill = BRAND_BG;
+    v.extreme_bg_color = egui::Color32::from_rgb(0x1b, 0x1d, 0x28);
+    v.faint_bg_color = BRAND_BG_LIGHT;
+    v.widgets.noninteractive.bg_fill = BRAND_BG;
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BRAND_STROKE);
+    v.widgets.inactive.bg_fill = BRAND_BG_LIGHT;
+    v.widgets.hovered.bg_fill = BRAND_STROKE;
+    v.widgets.active.bg_fill = BRAND_PURPLE;
+    v.selection.bg_fill = BRAND_PURPLE.linear_multiply(0.35);
+    v.selection.stroke = egui::Stroke::new(1.0, BRAND_PURPLE);
+    v.hyperlink_color = BRAND_PURPLE;
+    v.override_text_color = Some(BRAND_TEXT);
+    v
 }
 
 impl GuiApp {
@@ -64,12 +91,46 @@ impl GuiApp {
     }
 }
 
+impl GuiApp {
+    /// Lazily upload the embedded logo PNG as an egui texture.
+    fn logo(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
+        if self.logo_tex.is_none() {
+            let icon =
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")).ok()?;
+            let img = egui::ColorImage::from_rgba_unmultiplied(
+                [icon.width as usize, icon.height as usize],
+                &icon.rgba,
+            );
+            self.logo_tex = Some(ctx.load_texture("logo", img, egui::TextureOptions::LINEAR));
+        }
+        self.logo_tex.clone()
+    }
+}
+
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_secs(1));
+        let logo = self.logo(ctx);
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("sleeper-agent");
+                if let Some(tex) = &logo {
+                    ui.add(
+                        egui::Image::new(&*tex).fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                    );
+                }
+                ui.label(
+                    egui::RichText::new("SLEEPER")
+                        .size(17.0)
+                        .strong()
+                        .color(BRAND_TEXT),
+                );
+                ui.add_space(-4.0);
+                ui.label(
+                    egui::RichText::new("AGENT")
+                        .size(17.0)
+                        .strong()
+                        .color(BRAND_PURPLE),
+                );
                 ui.separator();
                 let data = self.data();
                 ui.label(format!("week {}", data.week));
@@ -599,6 +660,7 @@ pub fn run(
         trade_partner: String::new(),
         trade_send: String::new(),
         trade_receive: String::new(),
+        logo_tex: None,
     };
     // App logo (assets/logo-mark.svg rasterized to PNG at build time).
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
@@ -614,6 +676,14 @@ pub fn run(
         viewport,
         ..Default::default()
     };
-    eframe::run_native("sleeper-agent", options, Box::new(|_cc| Ok(Box::new(app))))
-        .map_err(|e| anyhow::anyhow!("eframe: {e}"))
+    eframe::run_native(
+        "sleeper-agent",
+        options,
+        Box::new(|cc| {
+            // Theme the whole app with the logo palette.
+            cc.egui_ctx.set_visuals(brand_visuals());
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("eframe: {e}"))
 }
