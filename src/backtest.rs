@@ -158,12 +158,13 @@ fn score(starters: &[LineupSlot], stats: &HashMap<String, HashMap<String, f64>>)
 pub async fn run(client: &SleeperClient, anthropic: &Anthropic, args: BacktestArgs) -> Result<()> {
     let settings = league_settings();
     println!(
-        "Backtest: {} season, weeks 1-{}, draft slot {}/{}, strategy {}",
+        "Backtest: {} season, weeks 1-{}, draft slot {}/{}, strategy {}, model {}",
         args.season,
         args.weeks,
         args.slot,
         TEAMS,
-        args.strategy.label()
+        args.strategy.label(),
+        anthropic.model()
     );
     println!("Scoring: real Sleeper actuals (pts_ppr). AI backend: live Claude.\n");
 

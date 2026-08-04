@@ -65,6 +65,9 @@ enum Command {
         /// Draft slot (1-12) for the backtested team.
         #[arg(long, default_value_t = 5)]
         slot: usize,
+        /// Override the Claude model for this run (e.g. claude-opus-4-8).
+        #[arg(long)]
+        model: Option<String>,
     },
     /// Show league-wide trending adds and drops (last 24h).
     Trending,
@@ -116,9 +119,12 @@ async fn main() -> Result<()> {
     let client = Arc::new(SleeperClient::new()?);
 
     // `backtest` needs no league — handle before full connect.
-    if let Some(Command::Backtest { season, weeks, slot }) = &cli.command {
-        let anthropic = anthropic::Anthropic::new(cfg.anthropic.clone())?
-            .with_context(cfg.load_context()?);
+    if let Some(Command::Backtest { season, weeks, slot, model }) = &cli.command {
+        let mut acfg = cfg.anthropic.clone();
+        if let Some(m) = model {
+            acfg.model = m.clone();
+        }
+        let anthropic = anthropic::Anthropic::new(acfg)?.with_context(cfg.load_context()?);
         return backtest::run(
             &client,
             &anthropic,
