@@ -81,12 +81,12 @@ pub fn brand_visuals() -> egui::Visuals {
     v.extreme_bg_color = egui::Color32::from_rgb(0x1b, 0x1d, 0x28);
     v.faint_bg_color = BRAND_BG_LIGHT;
     v.widgets.noninteractive.bg_fill = BRAND_BG;
-    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BRAND_STROKE);
+    v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, BRAND_STROKE);
     v.widgets.inactive.bg_fill = BRAND_BG_LIGHT;
     v.widgets.hovered.bg_fill = BRAND_STROKE;
     v.widgets.active.bg_fill = BRAND_PURPLE;
     v.selection.bg_fill = BRAND_PURPLE.linear_multiply(0.35);
-    v.selection.stroke = egui::Stroke::new(1.0, BRAND_PURPLE);
+    v.selection.stroke = egui::Stroke::new(1.0_f32, BRAND_PURPLE);
     v.hyperlink_color = BRAND_PURPLE;
     v.override_text_color = Some(BRAND_TEXT);
     v
