@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "sa", version, about = "sleeper-agent — autonomous Claude-powered manager for Sleeper leagues")]
+#[command(name = "sa", version = sleeper_agent::build_info::LONG_VERSION, about = "sleeper-agent — autonomous Claude-powered manager for Sleeper leagues")]
 struct Cli {
     /// Path to config.yaml (defaults to ./config.yaml or $XDG_CONFIG_HOME/sleeper-agent/config.yaml).
     #[arg(short, long, global = true)]

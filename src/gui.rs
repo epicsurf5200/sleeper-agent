@@ -812,6 +812,31 @@ impl GuiApp {
             if !msg.is_empty() {
                 ui.label(egui::RichText::new(msg).color(BRAND_PURPLE));
             }
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(6.0);
+            ui.heading("About");
+            ui.label(
+                egui::RichText::new(format!("Sleeper Agent {}", crate::build_info::VERSION))
+                    .strong(),
+            );
+            // Commit and date are the parts that actually distinguish two
+            // builds — the crate version rarely moves between them.
+            ui.label(
+                egui::RichText::new(format!(
+                    "Build {} · {}",
+                    crate::build_info::COMMIT,
+                    crate::build_info::COMMIT_DATE
+                ))
+                .small()
+                .weak(),
+            );
+            ui.label(
+                egui::RichText::new(format!("AI model: {}", self.cfg.anthropic.model))
+                    .small()
+                    .weak(),
+            );
         });
     }
 
