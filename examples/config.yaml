@@ -11,6 +11,12 @@ anthropic:
                            # CLI (`claude -p`) using your Pro/Max subscription login
   model: claude-sonnet-4-6
   max_tokens: 2048
+  thinking_tokens: 0       # claude-cli backend only: extended-thinking budget.
+                           # The CLI enables thinking by default, which spent
+                           # ~75% of each response on discarded thinking tokens
+                           # and roughly doubled latency (a lineup call went
+                           # 25s → 12s with it off). Raise it if you would
+                           # rather the model deliberate than answer quickly.
 
 sleeper:
   username: "REPLACE_WITH_SLEEPER_USERNAME"

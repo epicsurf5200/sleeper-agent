@@ -132,6 +132,26 @@ Give the service user a real home and shell for the login step
 (`usermod -d /home/sleeper -s /bin/bash sleeper`). The API key path avoids all
 of this; prefer it unless you specifically want subscription billing.
 
+## Performance and memory
+
+A cycle runs its three AI triggers (lineup, waiver, trade) concurrently, so it
+costs the slowest call rather than their sum — roughly 30s instead of 2+
+minutes. Two consequences worth knowing on a small LXC:
+
+- **Three completions are in flight at once.** On the `api` backend that is
+  three HTTPS requests and costs nothing extra. On `claude-cli` it is three
+  `claude` processes, each a Node runtime — budget ~1 GB of RAM for the
+  container, or use the API backend.
+- **Extended thinking is off by default** (`anthropic.thinking_tokens: 0`).
+  The CLI enables it otherwise, and it was spending ~75% of every response on
+  thinking tokens that get discarded — roughly doubling latency for these
+  short, fixed-format prompts. Raise it if you would rather the model
+  deliberate.
+
+`RUST_LOG=sleeper_agent=info` logs an `ai completion` line per call with
+prompt size, reply size, and elapsed milliseconds, which is the quickest way
+to see where a slow cycle went.
+
 ## Operating it
 
 ```sh

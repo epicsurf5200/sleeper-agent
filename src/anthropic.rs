@@ -157,11 +157,23 @@ impl Anthropic {
         user: &str,
         temperature: Option<f32>,
     ) -> Result<String> {
-        match self.backend {
+        let started = std::time::Instant::now();
+        let out = match self.backend {
             Backend::Api => self.complete_api(system, user, temperature).await,
             // The CLI has no temperature knob; ignore it there.
             Backend::ClaudeCli => self.complete_cli(system, user).await,
-        }
+        };
+        // Latency is the dominant cost of every AI-backed command, so make it
+        // measurable rather than something you have to time with a stopwatch.
+        tracing::info!(
+            backend = ?self.backend,
+            model = %self.cfg.model,
+            prompt_chars = system.len() + user.len(),
+            reply_chars = out.as_ref().map(|s| s.len()).unwrap_or(0),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "ai completion"
+        );
+        out
     }
 
     async fn complete_api(
@@ -243,6 +255,12 @@ impl Anthropic {
             .arg(self.effective_system(system))
             .arg("--tools")
             .arg("")
+            // The CLI turns extended thinking on by default. These prompts are
+            // short and the answer format is fixed, so the thinking tokens are
+            // pure latency — measured 14-30s per call with it on versus ~7s
+            // with it off. `anthropic.thinking_tokens` raises it back if you
+            // want deliberation.
+            .env("MAX_THINKING_TOKENS", self.cfg.thinking_tokens.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

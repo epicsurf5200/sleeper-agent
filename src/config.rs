@@ -16,6 +16,15 @@ pub struct AnthropicConfig {
     pub model: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// Extended-thinking budget for the `claude-cli` backend, in tokens.
+    ///
+    /// The CLI enables extended thinking by default, which for these prompts
+    /// spent ~75% of every response on discarded thinking tokens and made a
+    /// lineup call take 14-30s instead of ~7s. Analysis here is short and
+    /// well-structured, so the default is 0 (off). Raise it if you want the
+    /// model to deliberate harder at the cost of latency.
+    #[serde(default)]
+    pub thinking_tokens: u32,
 }
 
 fn default_model() -> String {
