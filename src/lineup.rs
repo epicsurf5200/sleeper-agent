@@ -201,7 +201,7 @@ pub async fn ai_optimize(
     // it as a parse failure rather than quietly starting nobody.
     let min_filled = local.starters.iter().filter(|s| s.player.is_some()).count();
 
-    match client.complete(&system, &user).await {
+    match client.complete_for(crate::anthropic::AiFeature::Lineup, &system, &user).await {
         Ok(text) => Ok(parse_ai_lineup(&text, roster, settings, week, strat, min_filled)
             .unwrap_or_else(|e| {
                 tracing::warn!(error=%e, "failed to parse AI lineup, using local fallback");

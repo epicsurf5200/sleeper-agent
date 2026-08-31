@@ -16,6 +16,12 @@ pub struct AnthropicConfig {
     pub model: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// Per-feature backend overrides. Each is "" (inherit `backend`), "api",
+    /// or "claude-cli" — so the fast/metered API can drive the interactive
+    /// features while the background daemon stays on the subscription CLI,
+    /// or vice versa.
+    #[serde(default)]
+    pub features: FeatureBackends,
     /// Extended-thinking budget for the `claude-cli` backend, in tokens.
     ///
     /// The CLI enables extended thinking by default, which for these prompts
@@ -25,6 +31,22 @@ pub struct AnthropicConfig {
     /// model to deliberate harder at the cost of latency.
     #[serde(default)]
     pub thinking_tokens: u32,
+}
+
+/// Which backend each AI-backed feature uses. Empty string inherits
+/// `anthropic.backend`; otherwise "api" or "claude-cli".
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeatureBackends {
+    #[serde(default)]
+    pub lineup: String,
+    #[serde(default)]
+    pub waiver: String,
+    #[serde(default)]
+    pub trade: String,
+    #[serde(default)]
+    pub draft: String,
+    #[serde(default)]
+    pub daemon: String,
 }
 
 fn default_model() -> String {

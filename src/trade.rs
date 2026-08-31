@@ -163,7 +163,7 @@ pub async fn suggest(
          If no trade is clearly worth making, reply with exactly: NO ACTION",
         news = if news_block.is_empty() { "(none)".into() } else { news_block },
     );
-    anthropic.complete(&system, &user).await
+    anthropic.complete_for(crate::anthropic::AiFeature::Trade, &system, &user).await
 }
 
 fn roster_block(roster: &Roster, strategy: Strategy) -> String {
@@ -262,7 +262,7 @@ async fn ai_summary(
         my_pos_counts, partner_pos_counts,
         if news_block.is_empty() { "(none)".into() } else { news_block },
     );
-    anthropic.complete(&system, &user).await
+    anthropic.complete_for(crate::anthropic::AiFeature::Trade, &system, &user).await
 }
 
 fn position_counts(roster: &Roster) -> Vec<(Position, u32)> {

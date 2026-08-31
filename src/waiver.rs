@@ -235,5 +235,5 @@ async fn ai_polish(
         if tx_block.is_empty() { "(none)" } else { &tx_block },
         if news_block.is_empty() { "(none)" } else { &news_block },
     );
-    anthropic.complete(&system, &user).await
+    anthropic.complete_for(crate::anthropic::AiFeature::Waiver, &system, &user).await
 }

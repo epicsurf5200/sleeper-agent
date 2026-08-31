@@ -199,10 +199,12 @@ async fn main() -> Result<()> {
             cmd_trade(&session, &anthropic()?, &news_fetcher, &cfg, partner, send, receive).await
         }
         Command::Daemon { once, dry_run } => {
+            // The daemon is configured as one unit, so pin every completion it
+            // makes to the daemon backend rather than to each sub-feature's.
             daemon::run(
                 &cfg,
                 &session,
-                &anthropic()?,
+                &anthropic()?.pinned_to(anthropic::AiFeature::Daemon),
                 daemon::DaemonArgs { once, dry_run },
             )
             .await

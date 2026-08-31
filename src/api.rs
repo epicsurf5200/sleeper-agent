@@ -39,6 +39,30 @@ const PLAYER_CACHE_TTL_SECS: u64 = 24 * 3600;
 // Raw API shapes
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiScheduleGame {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub home: Option<String>,
+    #[serde(default)]
+    pub away: Option<String>,
+    #[serde(default)]
+    pub week: u8,
+    #[serde(default)]
+    pub game_id: Option<String>,
+}
+
+impl ApiScheduleGame {
+    /// A game with a final score behind it. Used to decide which weeks can
+    /// contribute to a projection-accuracy record.
+    pub fn is_complete(&self) -> bool {
+        self.status.eq_ignore_ascii_case("complete")
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ApiState {
     pub week: u8,
@@ -226,6 +250,9 @@ pub struct SleeperClient {
     players_fetch: Arc<tokio::sync::Mutex<()>>,
     /// Cached weekly projections keyed by (season, week).
     projections: Arc<RwLock<HashMap<(String, u8), ProjectionMap>>>,
+    /// Cached NFL schedule keyed by season. One 27 KB document covers the
+    /// whole year, so this is fetched once and reused.
+    schedule: Arc<RwLock<HashMap<String, Arc<Vec<ApiScheduleGame>>>>>,
     cache_dir: PathBuf,
 }
 
@@ -254,6 +281,7 @@ impl SleeperClient {
             players: Arc::new(RwLock::new(None)),
             players_fetch: Arc::new(tokio::sync::Mutex::new(())),
             projections: Arc::new(RwLock::new(HashMap::new())),
+            schedule: Arc::new(RwLock::new(HashMap::new())),
             cache_dir,
         })
     }
@@ -422,6 +450,23 @@ impl SleeperClient {
             .collect();
         let arc = Arc::new(map);
         self.projections.write().insert(key, arc.clone());
+        Ok(arc)
+    }
+
+    /// Full-season NFL schedule. Lives outside the /v1 namespace, hence the
+    /// hand-built URL. Gives home/away and kickoff date, which the projections
+    /// feed does not.
+    pub async fn schedule(&self, season: &str) -> Result<Arc<Vec<ApiScheduleGame>>> {
+        if let Some(s) = self.schedule.read().get(season).cloned() {
+            return Ok(s);
+        }
+        let root = self.base.trim_end_matches("/v1");
+        let games: Vec<ApiScheduleGame> = self
+            .get_json(&format!("{root}/schedule/nfl/regular/{season}"))
+            .await
+            .with_context(|| format!("fetching {season} NFL schedule"))?;
+        let arc = Arc::new(games);
+        self.schedule.write().insert(season.to_string(), arc.clone());
         Ok(arc)
     }
 
