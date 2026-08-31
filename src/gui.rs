@@ -239,7 +239,7 @@ impl eframe::App for GuiApp {
             Tab::Lineup => self.render_lineup(ui, ctx),
             Tab::Waiver => self.render_waiver(ui, ctx),
             Tab::Trade => self.render_trade(ui, ctx),
-            Tab::Trending => self.render_trending(ui),
+            Tab::Trending => self.render_trending(ui, ctx),
             Tab::Activity => self.render_activity(ui),
             Tab::Draft => self.render_draft(ui, ctx),
             Tab::News => self.render_news(ui),
@@ -329,6 +329,29 @@ impl GuiApp {
                 *self.selected.lock() = Some(p.clone());
             }
         });
+    }
+
+    /// A clickable name for lists that only carry a name (the draft board).
+    /// Falls back to a plain label when the player cannot be resolved to a
+    /// roster entry, so an undrafted or unknown name simply is not a link.
+    fn player_name_link(&self, ui: &mut egui::Ui, text: &str, name: &str, data: &AppData) {
+        let found = data
+            .all_rosters
+            .iter()
+            .flat_map(|r| r.players.iter())
+            .find(|p| p.name == name)
+            .cloned();
+        match found {
+            Some(p) => {
+                let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+                if resp.on_hover_text("Click for player details").clicked() {
+                    *self.selected.lock() = Some(p);
+                }
+            }
+            None => {
+                ui.label(text);
+            }
+        }
     }
 
     /// Floating detail window for the selected player.
@@ -750,22 +773,23 @@ impl GuiApp {
         }
     }
 
-    fn render_trending(&self, ui: &mut egui::Ui) {
+    fn render_trending(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let data = self.data();
+        let text = ui.style().visuals.text_color();
         ui.columns(2, |cols| {
             cols[0].heading("Trending ADDS (24h)");
             egui::ScrollArea::vertical()
                 .id_salt("adds")
                 .show(&mut cols[0], |ui| {
                     for t in &data.trending_add {
-                        ui.label(format!(
-                            "{:>6}  {} ({} {}) proj {:.1}",
-                            t.count,
-                            t.player.name,
-                            t.player.position,
-                            t.player.team,
-                            t.player.projected_points
-                        ));
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(format!("{:>6}", t.count)).weak());
+                            self.player_cell(ui, ctx, &t.player, text);
+                            ui.label(format!(
+                                "({} {}) proj {:.1}",
+                                t.player.position, t.player.team, t.player.projected_points
+                            ));
+                        });
                     }
                 });
             cols[1].heading("Trending DROPS (24h)");
@@ -773,10 +797,11 @@ impl GuiApp {
                 .id_salt("drops")
                 .show(&mut cols[1], |ui| {
                     for t in &data.trending_drop {
-                        ui.label(format!(
-                            "{:>6}  {} ({} {})",
-                            t.count, t.player.name, t.player.position, t.player.team
-                        ));
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(format!("{:>6}", t.count)).weak());
+                            self.player_cell(ui, ctx, &t.player, text);
+                            ui.label(format!("({} {})", t.player.position, t.player.team));
+                        });
                     }
                 });
         });
@@ -854,13 +879,13 @@ impl GuiApp {
                     .unwrap_or_default(),
             ));
             for p in d.picks.iter().rev().take(10).rev() {
-                ui.label(format!(
-                    "R{}.{} {} → {}",
-                    p.round,
-                    p.pick_number,
-                    p.team_name,
-                    p.player_name.as_deref().unwrap_or("?")
-                ));
+                let name = p.player_name.as_deref().unwrap_or("?");
+                self.player_name_link(
+                    ui,
+                    &format!("R{}.{} {} → {}", p.round, p.pick_number, p.team_name, name),
+                    name,
+                    &data,
+                );
             }
         } else {
             ui.label("No draft state.");
