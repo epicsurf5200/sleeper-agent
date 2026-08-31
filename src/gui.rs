@@ -80,6 +80,14 @@ pub struct GuiApp {
     trend_why: Arc<Mutex<std::collections::HashMap<String, String>>>,
     /// Result of the league-wide trade scan on the Trades tab.
     trade_scan: Arc<Mutex<Option<String>>>,
+    /// Parsed trade ideas backing the visual cards.
+    trade_ideas: Arc<Mutex<Vec<trade::TradeIdea>>>,
+    /// Suggestion controls.
+    trade_count: usize,
+    trade_multi: bool,
+    trade_horizon: trade::Horizon,
+    trade_send_hint: String,
+    trade_want: Vec<String>,
 }
 
 /// Models offered in the settings dropdown. The field stays free-text so a
@@ -459,6 +467,147 @@ impl GuiApp {
             }
             None => {
                 ui.label(text);
+            }
+        }
+    }
+
+    /// One trade proposal, rendered as a card rather than prose.
+    fn trade_card(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        index: usize,
+        idea: &trade::TradeIdea,
+    ) {
+        let data = self.data();
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("#{}", index + 1)).weak());
+                ui.strong(if idea.headline.is_empty() {
+                    "Trade idea".to_string()
+                } else {
+                    idea.headline.clone()
+                });
+                if let Some(shape) = idea.shape_label() {
+                    ui.label(egui::RichText::new(shape).small().color(BRAND_PURPLE));
+                }
+            });
+            ui.separator();
+
+            for (n, step) in idea.steps.iter().enumerate() {
+                if idea.is_multi_tier() {
+                    ui.label(
+                        egui::RichText::new(format!("Step {} · with {}", n + 1, step.partner))
+                            .small()
+                            .strong(),
+                    );
+                } else {
+                    ui.label(egui::RichText::new(format!("With {}", step.partner)).small().strong());
+                }
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("You send").small().weak());
+                        for name in &step.send {
+                            self.trade_chip(ui, ctx, name, &data, egui::Color32::LIGHT_RED);
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(14.0);
+                        ui.label("→");
+                    });
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("You get").small().weak());
+                        for name in &step.receive {
+                            self.trade_chip(ui, ctx, name, &data, egui::Color32::LIGHT_GREEN);
+                        }
+                    });
+                });
+                if !step.why.is_empty() {
+                    ui.label(egui::RichText::new(&step.why).small().weak());
+                }
+                ui.add_space(4.0);
+            }
+
+            // For a chain, spell out what actually ends up on the roster —
+            // the per-step lists include players who are only passing through.
+            if idea.is_chained() {
+                ui.separator();
+                ui.label(egui::RichText::new("Net effect").small().strong());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new("Out:").small().weak());
+                    for name in idea.net_send() {
+                        self.trade_chip(ui, ctx, &name, &data, egui::Color32::LIGHT_RED);
+                    }
+                    ui.label(egui::RichText::new("In:").small().weak());
+                    for name in idea.net_receive() {
+                        self.trade_chip(ui, ctx, &name, &data, egui::Color32::LIGHT_GREEN);
+                    }
+                });
+            }
+
+            if !idea.why.is_empty() {
+                ui.add_space(4.0);
+                ui.label(&idea.why);
+            }
+            if !idea.risk.is_empty() {
+                ui.label(
+                    egui::RichText::new(format!("Risk: {}", idea.risk))
+                        .small()
+                        .color(egui::Color32::YELLOW),
+                );
+            }
+        });
+        ui.add_space(6.0);
+    }
+
+    /// A player in a trade card: headshot and clickable name when the name
+    /// resolves to a real roster entry, and visibly flagged when it does not —
+    /// a name the model invented should not look like a real player.
+    fn trade_chip(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        name: &str,
+        data: &AppData,
+        colour: egui::Color32,
+    ) {
+        let found = data
+            .all_rosters
+            .iter()
+            .flat_map(|r| r.players.iter())
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+            .cloned();
+        match found {
+            Some(p) => {
+                ui.horizontal(|ui| {
+                    self.headshot(ui, ctx, &p.id, 22.0);
+                    let resp = ui.add(
+                        egui::Label::new(egui::RichText::new(&p.name).color(colour))
+                            .sense(egui::Sense::click()),
+                    );
+                    if resp.on_hover_text("Click for player details").clicked() {
+                        *self.selected.lock() = Some(p.clone());
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("{} {} · {:.1}", p.position, p.team, p.projected_points))
+                            .small()
+                            .weak(),
+                    );
+                });
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new(format!("{name}  (not on any roster)"))
+                        .color(egui::Color32::YELLOW)
+                        .italics(),
+                )
+                .on_hover_text(
+                    "This name does not match any player in the league — treat the \
+                     suggestion with suspicion.",
+                );
             }
         }
     }
@@ -1043,13 +1192,64 @@ impl GuiApp {
     }
 
     fn render_trade(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        // League-wide scan first: it needs no input, so it is the useful
-        // starting point when you do not already have a deal in mind.
+        // League-wide scan first: it needs no input beyond these controls, so
+        // it is the useful starting point when you have no deal in mind.
+        ui.strong("Find trades");
+        egui::Grid::new("trade_opts").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+            ui.label("Suggestions");
+            ui.add(egui::DragValue::new(&mut self.trade_count).range(1..=8));
+            ui.end_row();
+
+            ui.label("Judge on");
+            ui.horizontal(|ui| {
+                for h in [trade::Horizon::ThisWeek, trade::Horizon::RestOfSeason] {
+                    if ui.selectable_label(self.trade_horizon == h, h.label()).clicked() {
+                        self.trade_horizon = h;
+                    }
+                }
+            });
+            ui.end_row();
+
+            ui.label("Trade away");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.trade_send_hint)
+                    .desired_width(260.0)
+                    .hint_text("player or position, comma separated (optional)"),
+            );
+            ui.end_row();
+
+            ui.label("Looking for");
+            ui.horizontal_wrapped(|ui| {
+                for pos in ["QB", "RB", "WR", "TE", "K", "DST"] {
+                    let mut on = self.trade_want.iter().any(|p| p == pos);
+                    if ui.toggle_value(&mut on, pos).changed() {
+                        if on {
+                            self.trade_want.push(pos.to_string());
+                        } else {
+                            self.trade_want.retain(|p| p != pos);
+                        }
+                    }
+                }
+            });
+            ui.end_row();
+
+            ui.label("Multi-team");
+            ui.checkbox(
+                &mut self.trade_multi,
+                "Allow chained trades (acquire, then flip on)",
+            )
+            .on_hover_text(
+                "Each extra leg is another manager who has to agree, so most ideas \
+                 will still be a single trade.",
+            );
+            ui.end_row();
+        });
+
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             let scanning = self.is_busy("trade_scan");
             if ui
                 .add_enabled(!scanning, egui::Button::new("Scan league for trades"))
-                .on_hover_text("Ask Claude to find trades worth proposing across every roster")
                 .clicked()
             {
                 self.spawn_trade_scan(ctx.clone());
@@ -1058,20 +1258,37 @@ impl GuiApp {
                 ui.spinner();
                 ui.label("Comparing every roster…");
             }
-            if self.trade_scan.lock().is_some() && ui.button("Clear").clicked() {
+            if !self.trade_ideas.lock().is_empty() && ui.button("Clear").clicked() {
+                self.trade_ideas.lock().clear();
                 *self.trade_scan.lock() = None;
             }
         });
-        if let Some(text) = self.trade_scan.lock().clone() {
-            ui.add_space(4.0);
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.strong("Suggested trades");
-                egui::ScrollArea::vertical().id_salt("scan").max_height(260.0).show(ui, |ui| {
-                    ui.label(text);
-                });
+
+        let ideas = self.trade_ideas.lock().clone();
+        if !ideas.is_empty() {
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().id_salt("trade_ideas").max_height(420.0).show(
+                ui,
+                |ui| {
+                    for (i, idea) in ideas.iter().enumerate() {
+                        self.trade_card(ui, ctx, i, idea);
+                    }
+                },
+            );
+        } else if let Some(raw) = self.trade_scan.lock().clone() {
+            // Structured parsing failed — show what came back rather than
+            // silently reporting nothing.
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("Could not read that as structured trades:")
+                    .small()
+                    .color(egui::Color32::YELLOW),
+            );
+            egui::ScrollArea::vertical().id_salt("scan_raw").max_height(220.0).show(ui, |ui| {
+                ui.label(raw);
             });
         }
+
         ui.add_space(6.0);
         ui.separator();
         ui.strong("Evaluate a specific trade");
@@ -1376,20 +1593,43 @@ impl GuiApp {
         let data = self.data();
         let news = data.news;
         let week = data.week;
-        let (out, busy, status) =
-            (self.trade_scan.clone(), self.busy.clone(), self.status.clone());
+        let opts = trade::SuggestOptions {
+            count: self.trade_count,
+            multi_tier: self.trade_multi,
+            send_hints: self
+                .trade_send_hint
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
+            want_positions: self.trade_want.clone(),
+            horizon: self.trade_horizon,
+            week,
+        };
+        let (raw_out, ideas_out, busy, status) = (
+            self.trade_scan.clone(),
+            self.trade_ideas.clone(),
+            self.busy.clone(),
+            self.status.clone(),
+        );
         *self.status.lock() = "Scanning the league for trades…".into();
         self.rt.spawn(async move {
             let result = async {
                 let roster = session.my_roster(week).await?;
                 let all = session.all_rosters(week).await?;
-                trade::suggest(&anthropic, &roster, &all, strat, &news, 3).await
+                trade::suggest_ideas(&anthropic, &roster, &all, strat, &news, &opts).await
             }
             .await;
             match result {
-                Ok(text) => {
-                    *status.lock() = "Trade scan complete.".into();
-                    *out.lock() = Some(text);
+                Ok((ideas, raw)) => {
+                    *status.lock() = if ideas.is_empty() {
+                        "No trades suggested.".into()
+                    } else {
+                        format!("{} trade idea(s).", ideas.len())
+                    };
+                    *ideas_out.lock() = ideas;
+                    *raw_out.lock() = Some(raw);
                 }
                 Err(e) => *status.lock() = format!("trade scan error: {e}"),
             }
@@ -1914,6 +2154,12 @@ pub fn run(
         show_api_key: false,
         trend_why: Arc::new(Mutex::new(std::collections::HashMap::new())),
         trade_scan: Arc::new(Mutex::new(None)),
+        trade_ideas: Arc::new(Mutex::new(Vec::new())),
+        trade_count: 3,
+        trade_multi: false,
+        trade_horizon: trade::Horizon::RestOfSeason,
+        trade_send_hint: String::new(),
+        trade_want: Vec::new(),
     };
     // App logo (assets/logo-mark.svg rasterized to PNG at build time).
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))

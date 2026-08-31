@@ -274,3 +274,447 @@ fn position_counts(roster: &Roster) -> Vec<(Position, u32)> {
     v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     v
 }
+
+// ---------------------------------------------------------------------------
+// Structured suggestions
+// ---------------------------------------------------------------------------
+
+/// One leg of a trade. A simple deal is a single step; a multi-tier idea
+/// chains several, where a player acquired in step 1 is dealt on in step 2.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TradeStep {
+    #[serde(default)]
+    pub partner: String,
+    #[serde(default)]
+    pub send: Vec<String>,
+    #[serde(default)]
+    pub receive: Vec<String>,
+    #[serde(default)]
+    pub why: String,
+}
+
+/// A complete proposal, possibly spanning several trades.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TradeIdea {
+    #[serde(default)]
+    pub headline: String,
+    #[serde(default)]
+    pub steps: Vec<TradeStep>,
+    #[serde(default)]
+    pub why: String,
+    /// What would have to go right, in the model's own words.
+    #[serde(default)]
+    pub risk: String,
+}
+
+impl TradeIdea {
+    /// True when this involves more than one trade.
+    pub fn is_multi_tier(&self) -> bool {
+        self.steps.len() > 1
+    }
+
+    /// True when the steps genuinely hand off — some step sends on a player
+    /// acquired in an earlier one.
+    ///
+    /// Asked for a chain, the model will sometimes return two unrelated trades
+    /// bundled under a chain-sounding headline. That is a different (and less
+    /// fragile) thing than a real chain, so the label is derived from the
+    /// steps rather than taken from the model's description.
+    pub fn is_chained(&self) -> bool {
+        let mut acquired: Vec<&String> = Vec::new();
+        for step in &self.steps {
+            if step.send.iter().any(|p| acquired.contains(&p)) {
+                return true;
+            }
+            acquired.extend(step.receive.iter());
+        }
+        false
+    }
+
+    /// How to describe the shape of this proposal in the UI.
+    pub fn shape_label(&self) -> Option<String> {
+        match (self.steps.len(), self.is_chained()) {
+            (0 | 1, _) => None,
+            (n, true) => Some(format!("{n}-step chain")),
+            (n, false) => Some(format!("{n} independent trades")),
+        }
+    }
+
+    /// Players leaving this roster across every step, minus any that were
+    /// acquired earlier in the same chain — those were never ours to lose.
+    pub fn net_send(&self) -> Vec<String> {
+        let acquired: Vec<&String> = self.steps.iter().flat_map(|s| s.receive.iter()).collect();
+        let mut seen: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        for name in self.steps.iter().flat_map(|s| s.send.iter()) {
+            // Only count a player as acquired-then-flipped once.
+            if acquired.contains(&name) && !seen.contains(name) {
+                seen.push(name.clone());
+                continue;
+            }
+            out.push(name.clone());
+        }
+        out
+    }
+
+    /// Players remaining on this roster once the whole chain completes.
+    pub fn net_receive(&self) -> Vec<String> {
+        let sent: Vec<&String> = self.steps.iter().flat_map(|s| s.send.iter()).collect();
+        let mut out = Vec::new();
+        for name in self.steps.iter().flat_map(|s| s.receive.iter()) {
+            if sent.contains(&name) {
+                continue; // acquired then dealt on
+            }
+            out.push(name.clone());
+        }
+        out
+    }
+}
+
+/// Whether a trade is judged on this week's matchup or the whole season.
+///
+/// These pull in genuinely different directions: a player on bye is worthless
+/// this week and unaffected over a season, and an injured star is the reverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Horizon {
+    ThisWeek,
+    RestOfSeason,
+}
+
+impl Horizon {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ThisWeek => "This week",
+            Self::RestOfSeason => "Rest of season",
+        }
+    }
+
+    /// Guidance handed to the model.
+    fn guidance(&self, week: u8) -> String {
+        match self {
+            Self::ThisWeek => format!(
+                "Judge every deal purely on week {week}. A player on bye or ruled out \
+                 this week is worth nothing to me now regardless of his talent, and a \
+                 favourable single matchup is worth chasing. Ignore long-term value."
+            ),
+            Self::RestOfSeason =>
+                "Judge every deal on the remainder of the season. A one-week bye or a \
+                 soft matchup is close to irrelevant; durability, role security and \
+                 remaining schedule are what matter. Prefer the player who helps most \
+                 between now and the playoffs."
+                    .to_string(),
+        }
+    }
+}
+
+/// Knobs for a suggestion run.
+#[derive(Debug, Clone)]
+pub struct SuggestOptions {
+    pub count: usize,
+    /// Allow chained proposals rather than only single trades.
+    pub multi_tier: bool,
+    /// Players or positions to move on, free text as typed by the user.
+    pub send_hints: Vec<String>,
+    /// Positions to acquire.
+    pub want_positions: Vec<String>,
+    /// Time horizon the deals are judged against.
+    pub horizon: Horizon,
+    /// Week the horizon is anchored to.
+    pub week: u8,
+}
+
+impl Default for SuggestOptions {
+    fn default() -> Self {
+        Self {
+            count: 3,
+            multi_tier: false,
+            send_hints: Vec::new(),
+            want_positions: Vec::new(),
+            horizon: Horizon::RestOfSeason,
+            week: 1,
+        }
+    }
+}
+
+/// Ask for trade ideas as JSON so they can be rendered as structured cards
+/// rather than a wall of prose. Returns the parsed ideas and the raw reply,
+/// so a response that will not parse can still be shown to the user instead
+/// of being swallowed.
+pub async fn suggest_ideas(
+    anthropic: &Anthropic,
+    my_roster: &Roster,
+    other_rosters: &[Roster],
+    strategy: Strategy,
+    news: &[NewsItem],
+    opts: &SuggestOptions,
+) -> Result<(Vec<TradeIdea>, String)> {
+    let others: Vec<&Roster> = other_rosters
+        .iter()
+        .filter(|r| r.team_id != my_roster.team_id)
+        .collect();
+    if others.is_empty() {
+        return Err(anyhow!("no other rosters to trade with"));
+    }
+
+    let tier_rule = if opts.multi_tier {
+        "Multi-team ideas are explicitly requested, so at least one idea MUST chain \
+         two or more trades: acquire a player from one manager and flip him to \
+         another in a later step. Put each leg in `steps`, in the order they must \
+         happen, and make the hand-off explicit — a player received in one step \
+         should be sent in the next. Every extra leg is another manager who has to \
+         say yes, so keep chains to two or three legs and say in `risk` what makes \
+         the chain fragile."
+    } else {
+        "Each idea must be a single trade: exactly one entry in `steps`."
+    };
+
+    let mut constraints = Vec::new();
+    if !opts.send_hints.is_empty() {
+        constraints.push(format!(
+            "Build the deals around moving these players or positions: {}.",
+            opts.send_hints.join(", ")
+        ));
+    }
+    if !opts.want_positions.is_empty() {
+        constraints.push(format!(
+            "Prioritise acquiring these positions: {}.",
+            opts.want_positions.join(", ")
+        ));
+    }
+    let constraint_block = if constraints.is_empty() {
+        "Target my weakest starting spot using my deepest surplus.".to_string()
+    } else {
+        constraints.join(" ")
+    };
+
+    let system = format!(
+        "You are an autonomous fantasy football GM looking for trades that help \
+         my team. {}\n\
+         Only propose trades involving players actually listed on the named \
+         rosters, and spell every player name exactly as it appears there. \
+         Be concrete and realistic — the other manager must plausibly say yes, \
+         so do not propose lopsided robbery. {}\n\
+         {}\n\
+         Reply with JSON only: no prose, no code fences.",
+        strategy.guidance(),
+        tier_rule,
+        opts.horizon.guidance(opts.week)
+    );
+
+    let me = roster_block(my_roster, strategy);
+    let league = others
+        .iter()
+        .map(|r| roster_block(r, strategy))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let news_block = news
+        .iter()
+        .take(12)
+        .map(|n| format!("- [{}] {}", n.source, n.title))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let user = format!(
+        "=== MY TEAM ({my_team}) ===\n{me}\n\n\
+         === OTHER ROSTERS ===\n{league}\n\n\
+         === RECENT NEWS ===\n{news}\n\n\
+         {constraint_block}\n\
+         Horizon: {horizon}.\n\n\
+         Return up to {count} ideas as a JSON array. Each element:\n\
+         {{\n\
+         \x20 \"headline\": \"<short label, e.g. 'Turn RB depth into a WR1'>\",\n\
+         \x20 \"steps\": [\n\
+         \x20   {{\"partner\": \"<team name>\",\n\
+         \x20    \"send\": [\"<my player>\"],\n\
+         \x20    \"receive\": [\"<their player>\"],\n\
+         \x20    \"why\": \"<one sentence on why they accept>\"}}\n\
+         \x20 ],\n\
+         \x20 \"why\": \"<two sentences on why this helps me>\",\n\
+         \x20 \"risk\": \"<one sentence: what has to go right>\"\n\
+         }}\n\n\
+         If no trade is worth making, return an empty array: []",
+        my_team = my_roster.team_name,
+        news = if news_block.is_empty() { "(none)".into() } else { news_block },
+        count = opts.count,
+        horizon = opts.horizon.label(),
+    );
+
+    let raw = anthropic
+        .complete_for(crate::anthropic::AiFeature::Trade, &system, &user)
+        .await?;
+    let ideas = parse_ideas(&raw);
+    Ok((ideas, raw))
+}
+
+/// Pull the trade array out of a model reply.
+///
+/// The reply is asked to be bare JSON but in practice can arrive fenced or
+/// with a sentence in front, so the first balanced array is extracted rather
+/// than parsing the whole string.
+pub fn parse_ideas(raw: &str) -> Vec<TradeIdea> {
+    let Some(slice) = first_json_array(raw) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<TradeIdea>>(slice)
+        .map_err(|e| tracing::warn!(error = %e, "trade ideas did not parse as JSON"))
+        .unwrap_or_default()
+        .into_iter()
+        // An idea with no legs is not actionable and would render as an empty
+        // card, so drop it here rather than in the UI.
+        .filter(|i| !i.steps.is_empty())
+        .collect()
+}
+
+/// The first balanced `[...]` in `s`, ignoring brackets inside JSON strings.
+fn first_json_array(s: &str) -> Option<&str> {
+    let start = s.find('[')?;
+    let bytes = s.as_bytes();
+    let (mut depth, mut in_str, mut escaped) = (0usize, false, false);
+    for i in start..bytes.len() {
+        let c = bytes[i];
+        if in_str {
+            match c {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod suggest_tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_bare_json_array() {
+        let raw = r#"[{"headline":"H","steps":[{"partner":"P","send":["A"],"receive":["B"],"why":"w"}],"why":"y","risk":"r"}]"#;
+        let ideas = parse_ideas(raw);
+        assert_eq!(ideas.len(), 1);
+        assert_eq!(ideas[0].headline, "H");
+        assert_eq!(ideas[0].steps[0].partner, "P");
+        assert!(!ideas[0].is_multi_tier());
+    }
+
+    #[test]
+    fn tolerates_fences_and_a_preamble() {
+        let raw = "Sure, here you go:\n```json\n[{\"headline\":\"H\",\"steps\":[{\"partner\":\"P\",\"send\":[\"A\"],\"receive\":[\"B\"]}]}]\n```\nHope that helps!";
+        assert_eq!(parse_ideas(raw).len(), 1);
+    }
+
+    #[test]
+    fn brackets_inside_strings_do_not_end_the_array() {
+        let raw = r#"[{"headline":"a ] bracket","steps":[{"partner":"P","send":["A"],"receive":["B"]}]}]"#;
+        let ideas = parse_ideas(raw);
+        assert_eq!(ideas.len(), 1);
+        assert_eq!(ideas[0].headline, "a ] bracket");
+    }
+
+    #[test]
+    fn empty_array_and_unparseable_text_both_yield_nothing() {
+        assert!(parse_ideas("[]").is_empty());
+        assert!(parse_ideas("NO ACTION").is_empty());
+        assert!(parse_ideas("[not json]").is_empty());
+    }
+
+    #[test]
+    fn ideas_without_steps_are_dropped() {
+        assert!(parse_ideas(r#"[{"headline":"empty","steps":[]}]"#).is_empty());
+    }
+
+    #[test]
+    fn unrelated_steps_are_not_called_a_chain() {
+        // Two trades that share no player: bundled, not chained.
+        let idea = TradeIdea {
+            steps: vec![
+                TradeStep {
+                    partner: "A".into(),
+                    send: vec!["X".into()],
+                    receive: vec!["Y".into()],
+                    ..Default::default()
+                },
+                TradeStep {
+                    partner: "B".into(),
+                    send: vec!["P".into()],
+                    receive: vec!["Q".into()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(idea.is_multi_tier());
+        assert!(!idea.is_chained());
+        assert_eq!(idea.shape_label().unwrap(), "2 independent trades");
+    }
+
+    #[test]
+    fn a_real_hand_off_is_recognised_as_a_chain() {
+        let idea = TradeIdea {
+            steps: vec![
+                TradeStep {
+                    partner: "A".into(),
+                    send: vec!["Mine".into()],
+                    receive: vec!["Middle".into()],
+                    ..Default::default()
+                },
+                TradeStep {
+                    partner: "B".into(),
+                    send: vec!["Middle".into()],
+                    receive: vec!["Target".into()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(idea.is_chained());
+        assert_eq!(idea.shape_label().unwrap(), "2-step chain");
+    }
+
+    #[test]
+    fn a_single_step_has_no_shape_label() {
+        let idea = TradeIdea {
+            steps: vec![TradeStep::default()],
+            ..Default::default()
+        };
+        assert!(idea.shape_label().is_none());
+    }
+
+    #[test]
+    fn net_effect_cancels_a_player_acquired_then_flipped() {
+        let idea = TradeIdea {
+            steps: vec![
+                TradeStep {
+                    partner: "A".into(),
+                    send: vec!["Mine".into()],
+                    receive: vec!["Middle".into()],
+                    ..Default::default()
+                },
+                TradeStep {
+                    partner: "B".into(),
+                    send: vec!["Middle".into()],
+                    receive: vec!["Target".into()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(idea.is_multi_tier());
+        // "Middle" never sticks on either side of the ledger.
+        assert_eq!(idea.net_send(), vec!["Mine".to_string()]);
+        assert_eq!(idea.net_receive(), vec!["Target".to_string()]);
+    }
+}
