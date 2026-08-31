@@ -11,6 +11,15 @@ anthropic:
                            # CLI (`claude -p`) using your Pro/Max subscription login
   model: claude-sonnet-4-6
   max_tokens: 2048
+  # Pin individual features to a backend. "" inherits `backend` above.
+  # The API is faster and billed per token; claude-cli uses your Pro/Max
+  # subscription. Editable in the GUI under Settings → Advanced.
+  features:
+    lineup: ""             # "" | api | claude-cli
+    waiver: ""
+    trade: ""
+    draft: ""
+    daemon: ""             # covers every completion the daemon makes
   thinking_tokens: 0       # claude-cli backend only: extended-thinking budget.
                            # The CLI enables thinking by default, which spent
                            # ~75% of each response on discarded thinking tokens

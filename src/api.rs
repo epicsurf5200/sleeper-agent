@@ -67,6 +67,10 @@ impl ApiScheduleGame {
 pub struct ApiState {
     pub week: u8,
     pub season: String,
+    /// Falls back to the prior season for history when the current one has
+    /// not kicked off yet.
+    #[serde(default)]
+    pub previous_season: String,
     pub season_type: String,
     #[serde(default)]
     pub display_week: Option<u8>,

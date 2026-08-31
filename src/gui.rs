@@ -1,6 +1,7 @@
 //! Egui desktop GUI (feature `gui`).
 
 use crate::anthropic::Anthropic;
+use crate::anthropic::AiFeature;
 use crate::api::LeagueSession;
 use crate::config::Config;
 use crate::draft::{DraftManager, DraftSuggestion};
@@ -25,6 +26,7 @@ enum Tab {
     Trending,
     Activity,
     Draft,
+    Matchup,
     News,
     Settings,
 }
@@ -37,6 +39,7 @@ const ALL_TABS: &[(Tab, &str)] = &[
     (Tab::Trending, "Trending"),
     (Tab::Activity, "Activity"),
     (Tab::Draft, "Draft"),
+    (Tab::Matchup, "Matchup"),
     (Tab::News, "News"),
     (Tab::Settings, "Settings"),
 ];
@@ -64,6 +67,62 @@ pub struct GuiApp {
     context_files_text: String,
     leagues: Arc<Mutex<Vec<DiscoveredLeague>>>,
     settings_msg: Arc<Mutex<String>>,
+    /// Headshots, shared by every tab that lists players.
+    images: Arc<crate::images::ImageCache>,
+    /// Player whose detail window is open. Behind a Mutex because the list
+    /// renderers take &self.
+    selected: Arc<Mutex<Option<Player>>>,
+    /// Reveals the API key field, which is masked by default.
+    show_api_key: bool,
+}
+
+/// Models offered in the settings dropdown. The field stays free-text so a
+/// newer id can be used without waiting on a release.
+const MODELS: &[&str] = &[
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+];
+
+/// Mutable handle on one feature's backend setting.
+fn feature_slot(f: &mut crate::config::FeatureBackends, feat: AiFeature) -> &mut String {
+    match feat {
+        AiFeature::Lineup => &mut f.lineup,
+        AiFeature::Waiver => &mut f.waiver,
+        AiFeature::Trade => &mut f.trade,
+        AiFeature::Draft => &mut f.draft,
+        AiFeature::Daemon => &mut f.daemon,
+    }
+}
+
+/// Starters in slot order, bench and IR excluded.
+fn starters(r: &Roster) -> Vec<&Player> {
+    r.players.iter().filter(|p| p.roster_slot.is_starter_slot()).collect()
+}
+
+/// Chance of winning given a projected margin, as a percentage.
+///
+/// Weekly fantasy scores are noisy enough that a projected edge is far from
+/// decisive; a ~26 point standard deviation on the margin is the usual
+/// rule of thumb for a full-roster head-to-head.
+fn win_probability(margin: f32) -> f32 {
+    const SIGMA: f32 = 26.0;
+    50.0 * (1.0 + erf(margin / (SIGMA * std::f32::consts::SQRT_2)))
+}
+
+/// Abramowitz & Stegun 7.1.26 — plenty accurate for a win-probability bar.
+/// Computed in f64 so the published coefficients keep their precision.
+fn erf(x: f32) -> f32 {
+    let x = x as f64;
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    let y = 1.0
+        - (((((1.061_405_429 * t - 1.453_152_027) * t) + 1.421_413_741) * t - 0.284_496_736) * t
+            + 0.254_829_592)
+            * t
+            * (-x * x).exp();
+    (sign * y) as f32
 }
 
 // Palette from the Claude-designed logo (assets/logo-mark.svg).
@@ -175,7 +234,8 @@ impl eframe::App for GuiApp {
             ui.label(self.status.lock().clone());
         });
         egui::CentralPanel::default().show(ctx, |ui| match self.tab {
-            Tab::Roster => self.render_roster(ui),
+            Tab::Roster => self.render_roster(ui, ctx),
+            Tab::Matchup => self.render_matchup(ui, ctx),
             Tab::Lineup => self.render_lineup(ui, ctx),
             Tab::Waiver => self.render_waiver(ui, ctx),
             Tab::Trade => self.render_trade(ui, ctx),
@@ -185,11 +245,13 @@ impl eframe::App for GuiApp {
             Tab::News => self.render_news(ui),
             Tab::Settings => self.render_settings(ui, ctx),
         });
+        // Drawn last so it floats above whichever tab opened it.
+        self.render_player_detail(ctx);
     }
 }
 
 impl GuiApp {
-    fn render_roster(&self, ui: &mut egui::Ui) {
+    fn render_roster(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let data = self.data();
         let Some(r) = data.roster else {
             ui.label("Waiting for first refresh…");
@@ -216,7 +278,7 @@ impl GuiApp {
                         _ => ui.style().visuals.text_color(),
                     };
                     ui.colored_label(color, p.roster_slot.to_string());
-                    ui.colored_label(color, &p.name);
+                    self.player_cell(ui, ctx, p, color);
                     ui.colored_label(color, p.position.to_string());
                     ui.colored_label(color, &p.team);
                     ui.colored_label(color, p.status.to_string());
@@ -224,6 +286,328 @@ impl GuiApp {
                     ui.end_row();
                 }
             });
+        });
+    }
+
+
+    // -- player chrome ------------------------------------------------------
+
+    /// A player's headshot at `size`, or a neutral placeholder while it loads
+    /// (or permanently, for team defenses, which have no portrait).
+    fn headshot(&self, ui: &mut egui::Ui, ctx: &egui::Context, player_id: &str, size: f32) {
+        match self.images.texture(ctx, player_id) {
+            Some(tex) => {
+                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                    tex.id(),
+                    egui::vec2(size, size),
+                )));
+            }
+            None => {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), size / 2.0, BRAND_BG_LIGHT);
+            }
+        }
+    }
+
+    /// Headshot plus clickable name. Opens the detail window when clicked, so
+    /// every list of players behaves the same way.
+    fn player_cell(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        p: &Player,
+        color: egui::Color32,
+    ) {
+        ui.horizontal(|ui| {
+            self.headshot(ui, ctx, &p.id, 22.0);
+            let resp = ui.add(
+                egui::Label::new(egui::RichText::new(&p.name).color(color))
+                    .sense(egui::Sense::click()),
+            );
+            if resp.on_hover_text("Click for player details").clicked() {
+                *self.selected.lock() = Some(p.clone());
+            }
+        });
+    }
+
+    /// Floating detail window for the selected player.
+    fn render_player_detail(&self, ctx: &egui::Context) {
+        let Some(p) = self.selected.lock().clone() else {
+            return;
+        };
+        let data = self.data();
+        let mut open = true;
+        egui::Window::new(format!("{} · {} {}", p.name, p.position, p.team))
+            .open(&mut open)
+            .default_width(430.0)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal_top(|ui| {
+                    self.headshot(ui, ctx, &p.id, 120.0);
+                    ui.add_space(10.0);
+                    ui.vertical(|ui| {
+                        ui.heading(&p.name);
+                        ui.label(format!("{} · {} · {}", p.position, p.team, p.status));
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Projected this week: {:.1} pts ({} scoring)",
+                                p.projected_points,
+                                data.settings.as_ref().map(|s| s.scoring.as_str()).unwrap_or("?")
+                            ))
+                            .color(BRAND_PURPLE),
+                        );
+                        if p.avg_points > 0.0 {
+                            ui.label(format!("Season average: {:.1} pts/game", p.avg_points));
+                        }
+                        if let Some(b) = p.bye_week {
+                            ui.label(format!("Bye week: {b}"));
+                        }
+                    });
+                });
+
+                ui.add_space(8.0);
+                ui.separator();
+                ui.heading("Upcoming games");
+                let games = crate::player_detail::upcoming_for_team(
+                    &data.schedule,
+                    &p.team,
+                    data.week,
+                    5,
+                );
+                if games.is_empty() {
+                    ui.weak("No scheduled games found.");
+                } else {
+                    egui::Grid::new("detail_sched").num_columns(3).striped(true).show(ui, |ui| {
+                        for h in ["Week", "Opponent", "Date"] {
+                            ui.strong(h);
+                        }
+                        ui.end_row();
+                        for g in games {
+                            ui.label(g.week.to_string());
+                            ui.label(g.label());
+                            ui.label(g.date.clone().unwrap_or_default());
+                            ui.end_row();
+                        }
+                    });
+                }
+
+                ui.add_space(8.0);
+                ui.separator();
+                match data.perf.get(&p.id) {
+                    Some(rec) if rec.games > 0 => {
+                        ui.heading("Against projection");
+                        // The table can lag the live season during the
+                        // preseason, so always say which year it describes.
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} season · {} games",
+                                data.perf.season, rec.games
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                        let pct = rec.beat_pct();
+                        let colour = if pct >= 50.0 {
+                            egui::Color32::LIGHT_GREEN
+                        } else {
+                            egui::Color32::LIGHT_RED
+                        };
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Outperformed projection {:.0}% of games ({}/{})",
+                                pct, rec.beat, rec.games
+                            ))
+                            .color(colour)
+                            .strong(),
+                        );
+                        ui.label(format!(
+                            "Average {:+.1} pts vs projection ({:.1} actual vs {:.1} projected)",
+                            rec.avg_diff(),
+                            rec.avg_actual(),
+                            rec.avg_proj()
+                        ));
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Best week {:+.1} · worst week {:+.1}",
+                                rec.best_diff, rec.worst_diff
+                            ))
+                            .small()
+                            .weak(),
+                        );
+
+                        let totals = crate::player_detail::notable_stats(
+                            &rec.totals,
+                            &p.position.to_string(),
+                        );
+                        if !totals.is_empty() {
+                            ui.add_space(6.0);
+                            ui.heading(format!("{} totals", data.perf.season));
+                            egui::Grid::new("detail_stats").num_columns(2).striped(true).show(
+                                ui,
+                                |ui| {
+                                    for (label, v) in totals {
+                                        ui.label(label);
+                                        ui.label(format!("{v:.0}"));
+                                        ui.end_row();
+                                    }
+                                },
+                            );
+                        }
+                    }
+                    _ => {
+                        ui.heading("Against projection");
+                        ui.weak(
+                            "No completed games on record yet — this fills in once the season \
+                             is under way.",
+                        );
+                    }
+                }
+
+                if !p.news.is_empty() {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.heading("News");
+                    for n in p.news.iter().take(5) {
+                        ui.label(format!("• {n}"));
+                    }
+                }
+            });
+        if !open {
+            *self.selected.lock() = None;
+        }
+    }
+
+    // -- weekly matchup -----------------------------------------------------
+
+    /// Head-to-head view of this week's fantasy matchup.
+    fn render_matchup(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let data = self.data();
+        let Some(me) = data.roster.clone() else {
+            ui.label("Waiting for first refresh…");
+            return;
+        };
+        let Some(m) = data
+            .matchups
+            .iter()
+            .find(|m| m.home_team == me.team_name || m.away_team == me.team_name)
+            .cloned()
+        else {
+            ui.label(format!("No matchup scheduled for week {}.", data.week));
+            return;
+        };
+
+        let i_am_home = m.home_team == me.team_name;
+        let (my_proj, opp_proj, opp_name, my_score, opp_score) = if i_am_home {
+            (m.home_projected, m.away_projected, m.away_team.clone(), m.home_score, m.away_score)
+        } else {
+            (m.away_projected, m.home_projected, m.home_team.clone(), m.away_score, m.home_score)
+        };
+        let opp = data.all_rosters.iter().find(|r| r.team_name == opp_name).cloned();
+
+        ui.horizontal(|ui| {
+            ui.heading(format!("Week {} matchup", data.week));
+            ui.add_space(8.0);
+            if ui.button("Refresh").clicked() {
+                self.scheduler.poke();
+            }
+        });
+        ui.separator();
+
+        // Score line: the headline comparison.
+        let diff = my_proj - opp_proj;
+        let win_pct = win_probability(diff);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(&me.team_name).strong());
+                ui.label(
+                    egui::RichText::new(format!("{my_proj:.1}")).size(30.0).color(BRAND_PURPLE),
+                );
+                ui.label(egui::RichText::new(format!("live {my_score:.1}")).small().weak());
+            });
+            ui.add_space(18.0);
+            ui.vertical(|ui| {
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("vs").weak());
+            });
+            ui.add_space(18.0);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(&opp_name).strong());
+                ui.label(egui::RichText::new(format!("{opp_proj:.1}")).size(30.0));
+                ui.label(egui::RichText::new(format!("live {opp_score:.1}")).small().weak());
+            });
+        });
+
+        ui.add_space(6.0);
+        let (verdict, colour) = if diff >= 0.0 {
+            (format!("Favoured by {:.1} — {:.0}% to win", diff, win_pct), egui::Color32::LIGHT_GREEN)
+        } else {
+            (
+                format!("Underdog by {:.1} — {:.0}% to win", -diff, win_pct),
+                egui::Color32::LIGHT_RED,
+            )
+        };
+        ui.label(egui::RichText::new(verdict).color(colour).strong());
+        ui.add(
+            egui::ProgressBar::new((win_pct / 100.0).clamp(0.0, 1.0))
+                .desired_width(320.0)
+                .text(format!("{win_pct:.0}%")),
+        );
+        ui.label(
+            egui::RichText::new(
+                "Win chance assumes a ~26 pt standard deviation on the weekly margin.",
+            )
+            .small()
+            .weak(),
+        );
+
+        ui.add_space(10.0);
+        ui.separator();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::Grid::new("matchup_grid").num_columns(5).striped(true).show(ui, |ui| {
+                for h in [me.team_name.as_str(), "Proj", "", "Proj", opp_name.as_str()] {
+                    ui.strong(h);
+                }
+                ui.end_row();
+
+                let mine = starters(&me);
+                let theirs = opp.as_ref().map(|r| starters(r)).unwrap_or_default();
+                let rows = mine.len().max(theirs.len());
+                for i in 0..rows {
+                    match mine.get(i) {
+                        Some(p) => {
+                            self.player_cell(ui, ctx, p, ui.style().visuals.text_color());
+                            ui.label(format!("{:.1}", p.projected_points));
+                        }
+                        None => {
+                            ui.label("");
+                            ui.label("");
+                        }
+                    }
+                    // Slot label sits between the two sides.
+                    let slot = mine
+                        .get(i)
+                        .or_else(|| theirs.get(i))
+                        .map(|p| p.roster_slot.to_string())
+                        .unwrap_or_default();
+                    ui.label(egui::RichText::new(slot).weak());
+                    match theirs.get(i) {
+                        Some(p) => {
+                            ui.label(format!("{:.1}", p.projected_points));
+                            self.player_cell(ui, ctx, p, ui.style().visuals.text_color());
+                        }
+                        None => {
+                            ui.label("");
+                            ui.label("");
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+            if opp.is_none() {
+                ui.add_space(6.0);
+                ui.weak("Opponent roster not loaded yet.");
+            }
         });
     }
 
@@ -290,7 +674,7 @@ impl GuiApp {
                     ui.end_row();
                     for c in &r.candidates {
                         ui.label(c.priority.to_string());
-                        ui.label(&c.player.name);
+                        self.player_cell(ui, ctx, &c.player, ui.style().visuals.text_color());
                         ui.label(format!("{} {}", c.player.position, c.player.team));
                         ui.label(format!("{:.1}", c.metrics.adjusted_next_week));
                         ui.label(format!("{:.0}", c.metrics.ros_value));
@@ -813,6 +1197,132 @@ impl GuiApp {
                 ui.label(egui::RichText::new(msg).color(BRAND_PURPLE));
             }
 
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(6.0);
+            ui.heading("Advanced — Claude");
+
+            egui::Grid::new("advanced_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label("API key");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.cfg.anthropic.api_key)
+                            .desired_width(260.0)
+                            .password(!self.show_api_key)
+                            .hint_text("sk-ant-… (blank uses the Claude CLI)"),
+                    );
+                    let label = if self.show_api_key { "Hide" } else { "Show" };
+                    if ui.button(label).clicked() {
+                        self.show_api_key = !self.show_api_key;
+                    }
+                });
+                ui.end_row();
+
+                ui.label("Model");
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("model_combo")
+                        .selected_text(self.cfg.anthropic.model.clone())
+                        .width(230.0)
+                        .show_ui(ui, |ui| {
+                            for m in MODELS {
+                                ui.selectable_value(
+                                    &mut self.cfg.anthropic.model,
+                                    (*m).to_string(),
+                                    *m,
+                                );
+                            }
+                        });
+                    ui.label(egui::RichText::new("or type below").small().weak());
+                });
+                ui.end_row();
+
+                ui.label("");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.cfg.anthropic.model)
+                        .desired_width(260.0)
+                        .hint_text("any model id"),
+                );
+                ui.end_row();
+
+                ui.label("Max response tokens");
+                ui.add(egui::DragValue::new(&mut self.cfg.anthropic.max_tokens).range(256..=8192));
+                ui.end_row();
+
+                ui.label("Thinking budget");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut self.cfg.anthropic.thinking_tokens)
+                            .range(0..=8192),
+                    );
+                    ui.label(
+                        egui::RichText::new("0 = off, ~2x faster (CLI only)").small().weak(),
+                    );
+                });
+                ui.end_row();
+            });
+
+            if self.cfg.api_key_from_env {
+                ui.label(
+                    egui::RichText::new(
+                        "API key is set via ANTHROPIC_API_KEY — it will not be written to config.yaml.",
+                    )
+                    .small()
+                    .color(BRAND_PURPLE),
+                );
+            }
+
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new("Backend per feature").strong());
+            ui.label(
+                egui::RichText::new(
+                    "API is faster and billed per token; the Claude CLI uses your Pro/Max \
+                     subscription. \"Inherit\" follows the default above (API when a key is \
+                     set, otherwise the CLI).",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(4.0);
+            egui::Grid::new("feature_backends").num_columns(3).spacing([12.0, 6.0]).show(
+                ui,
+                |ui| {
+                    ui.strong("Feature");
+                    ui.strong("Backend");
+                    ui.strong("In effect");
+                    ui.end_row();
+                    for feat in AiFeature::ALL {
+                        ui.label(feat.label());
+                        let slot = feature_slot(&mut self.cfg.anthropic.features, feat);
+                        egui::ComboBox::from_id_salt(("backend", feat.label()))
+                            .selected_text(match slot.as_str() {
+                                "api" => "API",
+                                "claude-cli" => "Claude CLI",
+                                _ => "Inherit",
+                            })
+                            .width(130.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(slot, String::new(), "Inherit");
+                                ui.selectable_value(slot, "api".to_string(), "API");
+                                ui.selectable_value(
+                                    slot,
+                                    "claude-cli".to_string(),
+                                    "Claude CLI",
+                                );
+                            });
+                        // What the *running* client resolved, which can differ
+                        // from the saved setting until the app is restarted.
+                        ui.label(
+                            egui::RichText::new(self.anthropic.backend_name(feat)).small().weak(),
+                        );
+                        ui.end_row();
+                    }
+                },
+            );
+            ui.label(
+                egui::RichText::new("Backend changes take effect on restart.").small().weak(),
+            );
+
             ui.add_space(14.0);
             ui.separator();
             ui.add_space(6.0);
@@ -921,6 +1431,8 @@ pub fn run(
     scheduler: Arc<Scheduler>,
     cfg: Config,
 ) -> anyhow::Result<()> {
+    // The image cache needs its own handle to spawn fetches.
+    let rt2 = rt.clone();
     let app = GuiApp {
         rt,
         session,
@@ -942,6 +1454,9 @@ pub fn run(
         logo_tex: None,
         leagues: Arc::new(Mutex::new(Vec::new())),
         settings_msg: Arc::new(Mutex::new(String::new())),
+        images: Arc::new(crate::images::ImageCache::new(rt2)),
+        selected: Arc::new(Mutex::new(None)),
+        show_api_key: false,
     };
     // App logo (assets/logo-mark.svg rasterized to PNG at build time).
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))

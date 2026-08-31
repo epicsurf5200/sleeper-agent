@@ -24,10 +24,13 @@ pub mod config;
 pub mod draft;
 #[cfg(feature = "gui")]
 pub mod gui;
+#[cfg(feature = "gui")]
+pub mod images;
 pub mod lineup;
 pub mod metrics;
 pub mod daemon;
 pub mod news;
+pub mod player_detail;
 pub mod notify;
 pub mod scheduler;
 pub mod strategy;

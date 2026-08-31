@@ -2,7 +2,8 @@
 //! Compared to the ESPN-era version, the Sleeper snapshot also carries
 //! transactions, trending adds/drops, traded picks, and playoff brackets.
 
-use crate::api::LeagueSession;
+use crate::api::{ApiScheduleGame, LeagueSession};
+use crate::player_detail::{self, PerfTable};
 use crate::news::{self, NewsFetcher, NewsItem};
 use crate::types::*;
 use parking_lot::RwLock;
@@ -27,6 +28,14 @@ pub struct AppData {
     pub losers_bracket: Vec<BracketMatch>,
     pub last_refresh: Option<Instant>,
     pub last_error: Option<String>,
+    /// Full NFL schedule for the current season — powers "upcoming games".
+    pub schedule: Arc<Vec<ApiScheduleGame>>,
+    /// Projection-accuracy records. Rebuilt only when another week completes;
+    /// see player_detail::build_perf_table.
+    pub perf: Arc<PerfTable>,
+    /// The season currently in play, which is not always the season `perf`
+    /// was computed from (preseason falls back to last year).
+    pub season: String,
 }
 
 pub struct Scheduler {
@@ -120,6 +129,41 @@ pub async fn refresh_once(
     );
     let traded_picks = keep(session.traded_picks().await, "traded picks", &mut errors);
     let brackets = keep(session.playoff_bracket().await, "brackets", &mut errors);
+    // Schedule and accuracy table are both effectively static within a week;
+    // the client memoises the schedule and the accuracy table is disk-cached,
+    // so this is cheap after the first pass.
+    let state = keep(session.client.state().await, "nfl state", &mut errors);
+    if let Some(st) = &state {
+        if let Some(sched) = keep(
+            session.client.schedule(&st.season).await,
+            "schedule",
+            &mut errors,
+        ) {
+            data.write().schedule = sched;
+        }
+        match player_detail::scoring_season(&session.client, &st.season, &st.previous_season).await
+        {
+            Ok((perf_season, weeks)) => {
+                match player_detail::build_perf_table(
+                    &session.client,
+                    &perf_season,
+                    &weeks,
+                    &session.scoring_key,
+                )
+                .await
+                {
+                    Ok(t) => data.write().perf = Arc::new(t),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "accuracy table unavailable");
+                        errors.push(format!("accuracy: {e}"));
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "could not determine scoring season"),
+        }
+        data.write().season = st.season.clone();
+    }
+
     // A completed draft never changes — skip the (player-DB-heavy) re-fetch.
     let draft = if draft_done {
         None
