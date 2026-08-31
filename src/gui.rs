@@ -27,6 +27,7 @@ enum Tab {
     Activity,
     Draft,
     Matchup,
+    League,
     News,
     Settings,
 }
@@ -40,6 +41,7 @@ const ALL_TABS: &[(Tab, &str)] = &[
     (Tab::Activity, "Activity"),
     (Tab::Draft, "Draft"),
     (Tab::Matchup, "Matchup"),
+    (Tab::League, "League"),
     (Tab::News, "News"),
     (Tab::Settings, "Settings"),
 ];
@@ -56,7 +58,7 @@ pub struct GuiApp {
     waiver: Arc<Mutex<Option<WaiverReport>>>,
     trade: Arc<Mutex<Option<TradeAnalysis>>>,
     draft_sugg: Arc<Mutex<Option<DraftSuggestion>>>,
-    busy: Arc<Mutex<std::collections::HashSet<&'static str>>>,
+    busy: Arc<Mutex<std::collections::HashSet<String>>>,
     trade_partner: String,
     trade_send: String,
     trade_receive: String,
@@ -74,6 +76,10 @@ pub struct GuiApp {
     selected: Arc<Mutex<Option<Player>>>,
     /// Reveals the API key field, which is masked by default.
     show_api_key: bool,
+    /// AI explanations of why a player is trending, keyed by player id.
+    trend_why: Arc<Mutex<std::collections::HashMap<String, String>>>,
+    /// Result of the league-wide trade scan on the Trades tab.
+    trade_scan: Arc<Mutex<Option<String>>>,
 }
 
 /// Models offered in the settings dropdown. The field stays free-text so a
@@ -91,8 +97,103 @@ fn feature_slot(f: &mut crate::config::FeatureBackends, feat: AiFeature) -> &mut
         AiFeature::Waiver => &mut f.waiver,
         AiFeature::Trade => &mut f.trade,
         AiFeature::Draft => &mut f.draft,
+        AiFeature::Trending => &mut f.trending,
         AiFeature::Daemon => &mut f.daemon,
     }
+}
+
+/// "3rd", "11th" — ranks read better than bare numbers next to a total.
+fn ordinal(n: u32) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// Green for the top third of the league, red for the bottom third.
+fn rank_colour(rank: u32, teams: u32) -> egui::Color32 {
+    if teams < 3 {
+        return egui::Color32::GRAY;
+    }
+    if rank * 3 <= teams {
+        egui::Color32::LIGHT_GREEN
+    } else if rank * 3 > teams * 2 {
+        egui::Color32::LIGHT_RED
+    } else {
+        egui::Color32::from_rgb(220, 220, 120)
+    }
+}
+
+/// Radar plot of starter rank per position.
+///
+/// Plots rank rather than raw points: positions score on wildly different
+/// scales (a QB outscores a kicker every week), so a points-based radar would
+/// just show the scoring system rather than the team. Outer edge is best in
+/// the league, centre is last.
+fn radar_chart(ui: &mut egui::Ui, ranks: &[crate::league::PosRank]) {
+    const SIZE: f32 = 260.0;
+    let (resp, painter) =
+        ui.allocate_painter(egui::vec2(SIZE, SIZE), egui::Sense::hover());
+    let rect = resp.rect;
+    let centre = rect.center();
+    // Leave room for the position labels around the outside.
+    let radius = SIZE / 2.0 - 26.0;
+    let n = ranks.len();
+    if n < 3 {
+        return;
+    }
+
+    // Angle for axis i, starting at the top and going clockwise.
+    let angle = |i: usize| -> f32 {
+        std::f32::consts::TAU * (i as f32) / (n as f32) - std::f32::consts::FRAC_PI_2
+    };
+    let at = |i: usize, r: f32| -> egui::Pos2 {
+        let a = angle(i);
+        egui::pos2(centre.x + r * a.cos(), centre.y + r * a.sin())
+    };
+
+    // Grid rings.
+    for step in 1..=4 {
+        let r = radius * step as f32 / 4.0;
+        let ring: Vec<egui::Pos2> = (0..n).map(|i| at(i, r)).collect();
+        painter.add(egui::Shape::closed_line(
+            ring,
+            egui::Stroke::new(1.0_f32, BRAND_STROKE),
+        ));
+    }
+    // Spokes and labels.
+    for (i, r) in ranks.iter().enumerate() {
+        painter.line_segment([centre, at(i, radius)], egui::Stroke::new(1.0_f32, BRAND_STROKE));
+        let label_pos = at(i, radius + 15.0);
+        painter.text(
+            label_pos,
+            egui::Align2::CENTER_CENTER,
+            r.position.to_string(),
+            egui::FontId::proportional(12.0),
+            BRAND_TEXT,
+        );
+    }
+
+    // The team's shape.
+    let pts: Vec<egui::Pos2> = ranks
+        .iter()
+        .enumerate()
+        .map(|(i, r)| at(i, radius * r.starter_score().clamp(0.0, 1.0)))
+        .collect();
+    painter.add(egui::Shape::convex_polygon(
+        pts.clone(),
+        BRAND_PURPLE.gamma_multiply(0.35),
+        egui::Stroke::new(2.0_f32, BRAND_PURPLE),
+    ));
+    for p in &pts {
+        painter.circle_filled(*p, 3.0, BRAND_PURPLE);
+    }
+
+    resp.on_hover_text("Outer edge = best in league at that position, centre = last.");
 }
 
 /// Starters in slot order, bench and IR excluded.
@@ -233,9 +334,19 @@ impl eframe::App for GuiApp {
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.label(self.status.lock().clone());
         });
+        // Right-hand detail panel, opened by clicking any player. Declared
+        // before the central panel so egui gives it the space first.
+        if self.selected.lock().is_some() {
+            egui::SidePanel::right("player_detail")
+                .resizable(true)
+                .default_width(380.0)
+                .width_range(300.0..=560.0)
+                .show(ctx, |ui| self.render_player_detail(ui, ctx));
+        }
         egui::CentralPanel::default().show(ctx, |ui| match self.tab {
             Tab::Roster => self.render_roster(ui, ctx),
             Tab::Matchup => self.render_matchup(ui, ctx),
+            Tab::League => self.render_league(ui, ctx),
             Tab::Lineup => self.render_lineup(ui, ctx),
             Tab::Waiver => self.render_waiver(ui, ctx),
             Tab::Trade => self.render_trade(ui, ctx),
@@ -245,8 +356,6 @@ impl eframe::App for GuiApp {
             Tab::News => self.render_news(ui),
             Tab::Settings => self.render_settings(ui, ctx),
         });
-        // Drawn last so it floats above whichever tab opened it.
-        self.render_player_detail(ctx);
     }
 }
 
@@ -354,151 +463,361 @@ impl GuiApp {
         }
     }
 
-    /// Floating detail window for the selected player.
-    fn render_player_detail(&self, ctx: &egui::Context) {
+    /// Per-row "why is this trending?" button.
+    fn trend_why_button(
+        &self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        t: &TrendingPlayer,
+        dir: TrendDirection,
+    ) {
+        let busy = self.is_busy(&format!("why-{}", t.player.id));
+        if busy {
+            ui.spinner();
+            return;
+        }
+        let done = self.trend_why.lock().contains_key(&t.player.id);
+        let label = if done { "↻" } else { "Why?" };
+        if ui
+            .small_button(label)
+            .on_hover_text("Ask Claude why this player is trending")
+            .clicked()
+        {
+            self.spawn_trend_why(ctx.clone(), t.player.clone(), t.count, dir);
+        }
+    }
+
+    /// The explanation, once it has arrived.
+    fn trend_why_body(&self, ui: &mut egui::Ui, player_id: &str) {
+        let Some(text) = self.trend_why.lock().get(player_id).cloned() else {
+            return;
+        };
+        ui.indent(("why", player_id), |ui| {
+            ui.label(egui::RichText::new(text).small());
+            if ui.small_button("Dismiss").clicked() {
+                self.trend_why.lock().remove(player_id);
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    /// Detail for the selected player, rendered into the right-hand panel.
+    fn render_player_detail(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let Some(p) = self.selected.lock().clone() else {
             return;
         };
         let data = self.data();
-        let mut open = true;
-        egui::Window::new(format!("{} · {} {}", p.name, p.position, p.team))
-            .open(&mut open)
-            .default_width(430.0)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                ui.horizontal_top(|ui| {
-                    self.headshot(ui, ctx, &p.id, 120.0);
-                    ui.add_space(10.0);
-                    ui.vertical(|ui| {
-                        ui.heading(&p.name);
-                        ui.label(format!("{} · {} · {}", p.position, p.team, p.status));
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Projected this week: {:.1} pts ({} scoring)",
-                                p.projected_points,
-                                data.settings.as_ref().map(|s| s.scoring.as_str()).unwrap_or("?")
-                            ))
-                            .color(BRAND_PURPLE),
-                        );
-                        if p.avg_points > 0.0 {
-                            ui.label(format!("Season average: {:.1} pts/game", p.avg_points));
-                        }
-                        if let Some(b) = p.bye_week {
-                            ui.label(format!("Bye week: {b}"));
-                        }
-                    });
-                });
 
-                ui.add_space(8.0);
-                ui.separator();
-                ui.heading("Upcoming games");
-                let games = crate::player_detail::upcoming_for_team(
-                    &data.schedule,
-                    &p.team,
-                    data.week,
-                    5,
-                );
-                if games.is_empty() {
-                    ui.weak("No scheduled games found.");
-                } else {
-                    egui::Grid::new("detail_sched").num_columns(3).striped(true).show(ui, |ui| {
-                        for h in ["Week", "Opponent", "Date"] {
-                            ui.strong(h);
-                        }
-                        ui.end_row();
-                        for g in games {
-                            ui.label(g.week.to_string());
-                            ui.label(g.label());
-                            ui.label(g.date.clone().unwrap_or_default());
-                            ui.end_row();
-                        }
-                    });
+        ui.horizontal(|ui| {
+            ui.heading("Player");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("✕").on_hover_text("Close").clicked() {
+                    *self.selected.lock() = None;
                 }
+            });
+        });
+        ui.separator();
 
-                ui.add_space(8.0);
-                ui.separator();
-                match data.perf.get(&p.id) {
-                    Some(rec) if rec.games > 0 => {
-                        ui.heading("Against projection");
-                        // The table can lag the live season during the
-                        // preseason, so always say which year it describes.
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} season · {} games",
-                                data.perf.season, rec.games
-                            ))
-                            .small()
-                            .weak(),
-                        );
-                        let pct = rec.beat_pct();
-                        let colour = if pct >= 50.0 {
-                            egui::Color32::LIGHT_GREEN
-                        } else {
-                            egui::Color32::LIGHT_RED
-                        };
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Outperformed projection {:.0}% of games ({}/{})",
-                                pct, rec.beat, rec.games
-                            ))
-                            .color(colour)
-                            .strong(),
-                        );
-                        ui.label(format!(
-                            "Average {:+.1} pts vs projection ({:.1} actual vs {:.1} projected)",
-                            rec.avg_diff(),
-                            rec.avg_actual(),
-                            rec.avg_proj()
-                        ));
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Best week {:+.1} · worst week {:+.1}",
-                                rec.best_diff, rec.worst_diff
-                            ))
-                            .small()
-                            .weak(),
-                        );
+        egui::ScrollArea::vertical().id_salt("detail_scroll").show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                self.headshot(ui, ctx, &p.id, 128.0);
+                ui.heading(&p.name);
+                ui.label(format!("{} · {} · {}", p.position, p.team, p.status));
+            });
 
-                        let totals = crate::player_detail::notable_stats(
-                            &rec.totals,
-                            &p.position.to_string(),
+            ui.add_space(8.0);
+            let scoring = data.settings.as_ref().map(|s| s.scoring.as_str()).unwrap_or("?");
+            egui::Grid::new("detail_head").num_columns(2).spacing([10.0, 4.0]).show(ui, |ui| {
+                ui.label("Projected");
+                ui.label(
+                    egui::RichText::new(format!("{:.1} pts ({scoring})", p.projected_points))
+                        .color(BRAND_PURPLE)
+                        .strong(),
+                );
+                ui.end_row();
+                if p.avg_points > 0.0 {
+                    ui.label("Season avg");
+                    ui.label(format!("{:.1} pts/game", p.avg_points));
+                    ui.end_row();
+                }
+                ui.label("Roster slot");
+                ui.label(p.roster_slot.to_string());
+                ui.end_row();
+                if let Some(o) = &p.opponent {
+                    ui.label("This week");
+                    ui.label(o.clone());
+                    ui.end_row();
+                }
+                if let Some(b) = p.bye_week {
+                    ui.label("Bye week");
+                    ui.label(b.to_string());
+                    ui.end_row();
+                }
+                // Who in the league holds him — the first thing you want to
+                // know before proposing anything.
+                let owner = data
+                    .all_rosters
+                    .iter()
+                    .find(|r| r.players.iter().any(|q| q.id == p.id))
+                    .map(|r| r.team_name.clone());
+                ui.label("Rostered by");
+                ui.label(owner.unwrap_or_else(|| "Free agent".into()));
+                ui.end_row();
+
+                // League-wide add/drop interest, when he appears in either feed.
+                let add = data.trending_add.iter().find(|t| t.player.id == p.id).map(|t| t.count);
+                let drop = data.trending_drop.iter().find(|t| t.player.id == p.id).map(|t| t.count);
+                if let Some(c) = add {
+                    ui.label("Trending");
+                    ui.label(
+                        egui::RichText::new(format!("+{c} adds (24h)"))
+                            .color(egui::Color32::LIGHT_GREEN),
+                    );
+                    ui.end_row();
+                }
+                if let Some(c) = drop {
+                    ui.label("Trending");
+                    ui.label(
+                        egui::RichText::new(format!("-{c} drops (24h)"))
+                            .color(egui::Color32::LIGHT_RED),
+                    );
+                    ui.end_row();
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.strong("Upcoming games");
+            let games =
+                crate::player_detail::upcoming_for_team(&data.schedule, &p.team, data.week, 5);
+            if games.is_empty() {
+                ui.weak("No scheduled games found.");
+            } else {
+                egui::Grid::new("detail_sched").num_columns(3).striped(true).show(ui, |ui| {
+                    for g in games {
+                        ui.label(format!("Wk {}", g.week));
+                        ui.label(g.label());
+                        ui.label(
+                            egui::RichText::new(g.date.clone().unwrap_or_default()).small().weak(),
                         );
-                        if !totals.is_empty() {
-                            ui.add_space(6.0);
-                            ui.heading(format!("{} totals", data.perf.season));
-                            egui::Grid::new("detail_stats").num_columns(2).striped(true).show(
-                                ui,
-                                |ui| {
-                                    for (label, v) in totals {
-                                        ui.label(label);
-                                        ui.label(format!("{v:.0}"));
-                                        ui.end_row();
-                                    }
-                                },
+                        ui.end_row();
+                    }
+                });
+            }
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.strong("Against projection");
+            match data.perf.get(&p.id) {
+                Some(rec) if rec.games > 0 => {
+                    // Always name the season: during the preseason this is
+                    // last year's record, not this year's.
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} season · {} games",
+                            data.perf.season, rec.games
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    let pct = rec.beat_pct();
+                    let colour = if pct >= 50.0 {
+                        egui::Color32::LIGHT_GREEN
+                    } else {
+                        egui::Color32::LIGHT_RED
+                    };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Beat projection {pct:.0}% of games ({}/{})",
+                            rec.beat, rec.games
+                        ))
+                        .color(colour)
+                        .strong(),
+                    );
+                    ui.add(
+                        egui::ProgressBar::new((pct / 100.0).clamp(0.0, 1.0))
+                            .desired_width(220.0)
+                            .text(format!("{pct:.0}%")),
+                    );
+                    ui.label(format!(
+                        "Average {:+.1} vs projection ({:.1} actual, {:.1} projected)",
+                        rec.avg_diff(),
+                        rec.avg_actual(),
+                        rec.avg_proj()
+                    ));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Best {:+.1} · worst {:+.1}",
+                            rec.best_diff, rec.worst_diff
+                        ))
+                        .small()
+                        .weak(),
+                    );
+
+                    let totals =
+                        crate::player_detail::notable_stats(&rec.totals, &p.position.to_string());
+                    if !totals.is_empty() {
+                        ui.add_space(6.0);
+                        ui.strong(format!("{} totals", data.perf.season));
+                        egui::Grid::new("detail_stats").num_columns(2).striped(true).show(
+                            ui,
+                            |ui| {
+                                for (label, v) in totals {
+                                    ui.label(label);
+                                    ui.label(format!("{v:.0}"));
+                                    ui.end_row();
+                                }
+                            },
+                        );
+                    }
+                }
+                _ => {
+                    ui.weak("No completed games on record yet.");
+                }
+            }
+
+            // Headlines mentioning him, from the shared news feed as well as
+            // anything already attached to the player record.
+            let mut headlines: Vec<String> = p.news.clone();
+            for n in &data.news {
+                if n.title.contains(&p.name) && !headlines.iter().any(|h| h == &n.title) {
+                    headlines.push(n.title.clone());
+                }
+            }
+            ui.add_space(8.0);
+            ui.separator();
+            ui.strong("News");
+            if headlines.is_empty() {
+                ui.weak("No recent headlines mention this player.");
+            } else {
+                for h in headlines.iter().take(8) {
+                    ui.label(format!("• {h}"));
+                }
+            }
+        });
+    }
+
+
+    // -- league comparison --------------------------------------------------
+
+    /// How this roster stacks up against the league, position by position.
+    fn render_league(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let data = self.data();
+        let Some(me) = data.roster.clone() else {
+            ui.label("Waiting for first refresh…");
+            return;
+        };
+        if data.all_rosters.len() < 2 {
+            ui.label("Need the full league loaded to compare rosters.");
+            return;
+        }
+        let ranks = crate::league::rank_team(&data.all_rosters, &me.team_name);
+
+        ui.heading(format!("{} vs the league", me.team_name));
+        ui.label(
+            egui::RichText::new(format!(
+                "{} teams · ranked on projected points at each position",
+                data.all_rosters.len()
+            ))
+            .small()
+            .weak(),
+        );
+        ui.separator();
+
+        egui::ScrollArea::vertical().id_salt("league_scroll").show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                radar_chart(ui, &ranks);
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    // The actionable summary: where to buy and where to sell.
+                    let weak: Vec<&crate::league::PosRank> =
+                        ranks.iter().filter(|r| r.is_weakness()).collect();
+                    let strong: Vec<&crate::league::PosRank> =
+                        ranks.iter().filter(|r| r.is_strength()).collect();
+
+                    ui.strong("Where to improve");
+                    if weak.is_empty() {
+                        ui.weak("No position sits in the bottom third of the league.");
+                    } else {
+                        for r in &weak {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}  —  {} of {}, {:+.1} vs league average",
+                                    r.position,
+                                    ordinal(r.rank_starters),
+                                    r.teams,
+                                    r.vs_average()
+                                ))
+                                .color(egui::Color32::LIGHT_RED),
                             );
                         }
                     }
-                    _ => {
-                        ui.heading("Against projection");
-                        ui.weak(
-                            "No completed games on record yet — this fills in once the season \
-                             is under way.",
-                        );
-                    }
-                }
-
-                if !p.news.is_empty() {
                     ui.add_space(8.0);
-                    ui.separator();
-                    ui.heading("News");
-                    for n in p.news.iter().take(5) {
-                        ui.label(format!("• {n}"));
+                    ui.strong("Surplus to trade from");
+                    if strong.is_empty() {
+                        ui.weak("No position sits in the top third of the league.");
+                    } else {
+                        for r in &strong {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{}  —  {} of {}, {:+.1} vs league average",
+                                    r.position,
+                                    ordinal(r.rank_starters),
+                                    r.teams,
+                                    r.vs_average()
+                                ))
+                                .color(egui::Color32::LIGHT_GREEN),
+                            );
+                        }
                     }
+                });
+            });
+
+            ui.add_space(12.0);
+            ui.separator();
+            egui::Grid::new("league_grid").num_columns(6).striped(true).show(ui, |ui| {
+                for h in ["Pos", "Starters", "Rank", "vs avg", "Bench", "Bench rank"] {
+                    ui.strong(h);
+                }
+                ui.end_row();
+                for r in &ranks {
+                    ui.label(r.position.to_string());
+                    ui.label(format!("{:.1}", r.starters));
+                    ui.colored_label(rank_colour(r.rank_starters, r.teams), ordinal(r.rank_starters));
+                    let d = r.vs_average();
+                    ui.colored_label(
+                        if d >= 0.0 {
+                            egui::Color32::LIGHT_GREEN
+                        } else {
+                            egui::Color32::LIGHT_RED
+                        },
+                        format!("{d:+.1}"),
+                    );
+                    ui.label(format!("{:.1}", r.bench));
+                    ui.colored_label(rank_colour(r.rank_bench, r.teams), ordinal(r.rank_bench));
+                    ui.end_row();
                 }
             });
-        if !open {
-            *self.selected.lock() = None;
-        }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.strong("Your starters by position");
+            for r in &ranks {
+                let players = crate::league::starters_at(&me, r.position);
+                if players.is_empty() {
+                    continue;
+                }
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(r.position.to_string()).strong());
+                    for p in players {
+                        self.player_cell(ui, ctx, p, ui.style().visuals.text_color());
+                        ui.label(
+                            egui::RichText::new(format!("{:.1}", p.projected_points)).weak(),
+                        );
+                    }
+                });
+            }
+        });
     }
 
     // -- weekly matchup -----------------------------------------------------
@@ -653,7 +972,7 @@ impl GuiApp {
                         ui.label(s.slot.to_string());
                         match &s.player {
                             Some(p) => {
-                                ui.label(&p.name);
+                                self.player_cell(ui, ctx, p, ui.style().visuals.text_color());
                                 ui.label(p.status.to_string());
                                 ui.label(format!("{:.1}", p.projected_points));
                             }
@@ -724,6 +1043,38 @@ impl GuiApp {
     }
 
     fn render_trade(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // League-wide scan first: it needs no input, so it is the useful
+        // starting point when you do not already have a deal in mind.
+        ui.horizontal(|ui| {
+            let scanning = self.is_busy("trade_scan");
+            if ui
+                .add_enabled(!scanning, egui::Button::new("Scan league for trades"))
+                .on_hover_text("Ask Claude to find trades worth proposing across every roster")
+                .clicked()
+            {
+                self.spawn_trade_scan(ctx.clone());
+            }
+            if scanning {
+                ui.spinner();
+                ui.label("Comparing every roster…");
+            }
+            if self.trade_scan.lock().is_some() && ui.button("Clear").clicked() {
+                *self.trade_scan.lock() = None;
+            }
+        });
+        if let Some(text) = self.trade_scan.lock().clone() {
+            ui.add_space(4.0);
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.strong("Suggested trades");
+                egui::ScrollArea::vertical().id_salt("scan").max_height(260.0).show(ui, |ui| {
+                    ui.label(text);
+                });
+            });
+        }
+        ui.add_space(6.0);
+        ui.separator();
+        ui.strong("Evaluate a specific trade");
         egui::Grid::new("trade_in").num_columns(2).show(ui, |ui| {
             ui.label("Partner team:");
             ui.text_edit_singleline(&mut self.trade_partner);
@@ -789,7 +1140,9 @@ impl GuiApp {
                                 "({} {}) proj {:.1}",
                                 t.player.position, t.player.team, t.player.projected_points
                             ));
+                            self.trend_why_button(ui, ctx, t, TrendDirection::Add);
                         });
+                        self.trend_why_body(ui, &t.player.id);
                     }
                 });
             cols[1].heading("Trending DROPS (24h)");
@@ -801,7 +1154,9 @@ impl GuiApp {
                             ui.label(egui::RichText::new(format!("{:>6}", t.count)).weak());
                             self.player_cell(ui, ctx, &t.player, text);
                             ui.label(format!("({} {})", t.player.position, t.player.team));
+                            self.trend_why_button(ui, ctx, t, TrendDirection::Drop);
                         });
+                        self.trend_why_body(ui, &t.player.id);
                     }
                 });
         });
@@ -923,7 +1278,7 @@ impl GuiApp {
 
     fn spawn_lineup(&self, ctx: egui::Context) {
         let key = "lineup";
-        self.busy.lock().insert(key);
+        self.busy.lock().insert(key.to_string());
         let data = self.data();
         let Some(roster) = data.roster else {
             *self.status.lock() = "No roster yet.".into();
@@ -949,7 +1304,7 @@ impl GuiApp {
 
     fn spawn_waiver(&self, ctx: egui::Context) {
         let key = "waiver";
-        self.busy.lock().insert(key);
+        self.busy.lock().insert(key.to_string());
         let session = self.session.clone();
         let anthropic = self.anthropic.clone();
         let strat = self.strategy;
@@ -968,6 +1323,81 @@ impl GuiApp {
         });
     }
 
+    /// Ask Claude why one player is trending.
+    fn spawn_trend_why(
+        &self,
+        ctx: egui::Context,
+        player: Player,
+        count: u64,
+        direction: TrendDirection,
+    ) {
+        let key = format!("why-{}", player.id);
+        if !self.busy.lock().insert(key.clone()) {
+            return; // already running for this player
+        }
+        let anthropic = self.anthropic.clone();
+        let strat = self.strategy;
+        let data = self.data();
+        let Some(roster) = data.roster.clone() else {
+            self.busy.lock().remove(&key);
+            *self.status.lock() = "Roster not loaded yet.".into();
+            return;
+        };
+        let news = data.news;
+        let (out, busy, status) =
+            (self.trend_why.clone(), self.busy.clone(), self.status.clone());
+        let pid = player.id.clone();
+        let name = player.name.clone();
+        *self.status.lock() = format!("Analysing why {name} is trending…");
+        self.rt.spawn(async move {
+            match waiver::explain_trending(
+                &anthropic, &player, count, direction, &roster, &news, strat,
+            )
+            .await
+            {
+                Ok(text) => {
+                    *status.lock() = format!("Analysis ready for {name}.");
+                    out.lock().insert(pid, text);
+                }
+                Err(e) => *status.lock() = format!("trending analysis error: {e}"),
+            }
+            busy.lock().remove(&key);
+            ctx.request_repaint();
+        });
+    }
+
+    /// Scan every roster in the league for trades worth proposing.
+    fn spawn_trade_scan(&self, ctx: egui::Context) {
+        let key = "trade_scan";
+        self.busy.lock().insert(key.to_string());
+        let session = self.session.clone();
+        let anthropic = self.anthropic.clone();
+        let strat = self.strategy;
+        let data = self.data();
+        let news = data.news;
+        let week = data.week;
+        let (out, busy, status) =
+            (self.trade_scan.clone(), self.busy.clone(), self.status.clone());
+        *self.status.lock() = "Scanning the league for trades…".into();
+        self.rt.spawn(async move {
+            let result = async {
+                let roster = session.my_roster(week).await?;
+                let all = session.all_rosters(week).await?;
+                trade::suggest(&anthropic, &roster, &all, strat, &news, 3).await
+            }
+            .await;
+            match result {
+                Ok(text) => {
+                    *status.lock() = "Trade scan complete.".into();
+                    *out.lock() = Some(text);
+                }
+                Err(e) => *status.lock() = format!("trade scan error: {e}"),
+            }
+            busy.lock().remove(key);
+            ctx.request_repaint();
+        });
+    }
+
     fn spawn_trade(&self, ctx: egui::Context) {
         let key = "trade";
         let (partner, send_input, recv_input) = (
@@ -979,7 +1409,7 @@ impl GuiApp {
             *self.status.lock() = "Fill partner / send / receive.".into();
             return;
         }
-        self.busy.lock().insert(key);
+        self.busy.lock().insert(key.to_string());
         let data = self.data();
         let Some(roster) = data.roster.clone() else {
             *self.status.lock() = "No roster yet.".into();
@@ -1023,7 +1453,7 @@ impl GuiApp {
 
     fn spawn_draft(&self, ctx: egui::Context) {
         let key = "draft";
-        self.busy.lock().insert(key);
+        self.busy.lock().insert(key.to_string());
         let session = self.session.clone();
         let anthropic = self.anthropic.clone();
         let news = self.data().news;
@@ -1482,6 +1912,8 @@ pub fn run(
         images: Arc::new(crate::images::ImageCache::new(rt2)),
         selected: Arc::new(Mutex::new(None)),
         show_api_key: false,
+        trend_why: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        trade_scan: Arc::new(Mutex::new(None)),
     };
     // App logo (assets/logo-mark.svg rasterized to PNG at build time).
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))

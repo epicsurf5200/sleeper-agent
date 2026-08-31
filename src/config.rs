@@ -46,6 +46,8 @@ pub struct FeatureBackends {
     #[serde(default)]
     pub draft: String,
     #[serde(default)]
+    pub trending: String,
+    #[serde(default)]
     pub daemon: String,
 }
 

@@ -26,6 +26,7 @@ pub mod draft;
 pub mod gui;
 #[cfg(feature = "gui")]
 pub mod images;
+pub mod league;
 pub mod lineup;
 pub mod metrics;
 pub mod daemon;

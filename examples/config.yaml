@@ -19,6 +19,7 @@ anthropic:
     waiver: ""
     trade: ""
     draft: ""
+    trending: ""       # "why is this player trending?" analysis
     daemon: ""             # covers every completion the daemon makes
   thinking_tokens: 0       # claude-cli backend only: extended-thinking budget.
                            # The CLI enables thinking by default, which spent

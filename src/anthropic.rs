@@ -80,15 +80,17 @@ pub enum AiFeature {
     Waiver,
     Trade,
     Draft,
+    Trending,
     Daemon,
 }
 
 impl AiFeature {
-    pub const ALL: [AiFeature; 5] = [
+    pub const ALL: [AiFeature; 6] = [
         Self::Lineup,
         Self::Waiver,
         Self::Trade,
         Self::Draft,
+        Self::Trending,
         Self::Daemon,
     ];
 
@@ -98,6 +100,7 @@ impl AiFeature {
             Self::Waiver => "Waiver",
             Self::Trade => "Trade",
             Self::Draft => "Draft",
+            Self::Trending => "Trending",
             Self::Daemon => "Daemon",
         }
     }
@@ -109,6 +112,7 @@ impl AiFeature {
             Self::Waiver => &f.waiver,
             Self::Trade => &f.trade,
             Self::Draft => &f.draft,
+            Self::Trending => &f.trending,
             Self::Daemon => &f.daemon,
         }
     }
