@@ -1,0 +1,21 @@
+[package]
+name = "sa_ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C ABI bridge exposing the sleeper-agent core to the SwiftUI iOS app"
+license = "MIT"
+
+[lib]
+name = "sa_ffi"
+# staticlib is what Xcode links; rlib keeps `cargo test` usable on this crate.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# default-features = false drops the `gui` feature: eframe has no place on iOS.
+sleeper_agent = { path = "../..", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+parking_lot = "0.12"

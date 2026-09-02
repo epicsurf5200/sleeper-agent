@@ -16,13 +16,13 @@ pub struct DraftManager<'a> {
     pub my_team_name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DraftSuggestion {
     pub picks: Vec<SuggestedPick>,
     pub raw: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SuggestedPick {
     pub rank: u32,
     pub name: String,

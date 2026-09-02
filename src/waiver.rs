@@ -17,7 +17,7 @@ use crate::types::*;
 use anyhow::Result;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WaiverCandidate {
     pub priority: u32,
     pub player: Player,
@@ -27,14 +27,14 @@ pub struct WaiverCandidate {
     pub reasoning: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DropCandidate {
     pub player: Player,
     pub metrics: PlayerMetrics,
     pub net_ros_delta: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WaiverReport {
     pub candidates: Vec<WaiverCandidate>,
     pub raw: String,

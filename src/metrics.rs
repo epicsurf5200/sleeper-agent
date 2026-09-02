@@ -8,7 +8,7 @@
 use crate::strategy::Strategy;
 use crate::types::*;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PlayerMetrics {
     pub player_id: String,
     pub player_name: String,
@@ -132,7 +132,7 @@ impl PlayerMetrics {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PackageMetrics {
     pub total_mean: f32,
     pub total_floor: f32,

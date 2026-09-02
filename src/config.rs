@@ -312,6 +312,34 @@ impl Config {
         Ok(())
     }
 
+    /// Defaults for the iOS app.
+    ///
+    /// iOS cannot spawn subprocesses, so the Claude CLI backend is
+    /// unreachable there. Pinning `backend` to "api" makes that explicit:
+    /// without a key the app reports a missing key, rather than "auto"
+    /// resolving to a CLI that can never run.
+    pub fn for_ios() -> Self {
+        let mut c = Self {
+            anthropic: AnthropicConfig {
+                backend: "api".into(),
+                model: default_model(),
+                max_tokens: default_max_tokens(),
+                ..Default::default()
+            },
+            sleeper: SleeperConfig::default(),
+            settings: Settings::default(),
+            notify: NotifyConfig::default(),
+            daemon: DaemonConfig::default(),
+            base_dir: PathBuf::new(),
+            path: PathBuf::new(),
+            api_key_from_env: false,
+            webhook_from_env: false,
+        };
+        // Context files are desktop paths; the phone has no equivalent.
+        c.settings.context_files.clear();
+        c
+    }
+
     pub fn default_path() -> PathBuf {
         if let Ok(custom) = std::env::var("SA_CONFIG") {
             return PathBuf::from(custom);

@@ -1,0 +1,63 @@
+# XcodeGen spec for the iPhone app.
+#
+# The project file is generated rather than committed: a .pbxproj is
+# merge-hostile and impossible to review, whereas this is both. Regenerate
+# with ./ios/build.sh (which installs XcodeGen if needed).
+
+name: SleeperAgent
+options:
+  bundleIdPrefix: dev.sleeper-agent
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    # No team is set: a free Apple ID can sideload as-is, and anyone with a
+    # paid account can set DEVELOPMENT_TEAM without editing this file.
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  SleeperAgent:
+    type: application
+    platform: iOS
+    sources:
+      - path: SleeperAgent
+        excludes:
+          - "**/*.h"
+      - path: SleeperAgent/Core/sa_ffi.h
+        buildPhase: none
+      - path: SleeperAgent/SleeperAgent-Bridging-Header.h
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.sleeper-agent.ios
+        # Let Xcode synthesise Info.plist from the INFOPLIST_KEY_* values
+        # below, so there is no plist to keep in sync by hand.
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Sleeper Agent
+        # Dark-only, matching the desktop app's palette.
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        SWIFT_OBJC_BRIDGING_HEADER: SleeperAgent/SleeperAgent-Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/SleeperAgent/Core
+        # Rust staticlibs, one per platform. Built by ./ios/build.sh.
+        LIBRARY_SEARCH_PATHS:
+          - $(SRCROOT)/build/lib/$(PLATFORM_NAME)
+        OTHER_LDFLAGS:
+          - -lsa_ffi
+          # rustls needs these for TLS and the system trust store.
+          - -framework
+          - Security
+          - -framework
+          - CoreFoundation
+          - -framework
+          - SystemConfiguration
+    dependencies:
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework

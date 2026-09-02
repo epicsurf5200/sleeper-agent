@@ -5,7 +5,7 @@ use crate::strategy::Strategy;
 use crate::types::*;
 use anyhow::{anyhow, Result};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TradeAnalysis {
     pub send: Vec<PlayerMetrics>,
     pub receive: Vec<PlayerMetrics>,

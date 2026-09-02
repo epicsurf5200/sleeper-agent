@@ -77,6 +77,23 @@ sa daemon                # headless monitor: analyse on a timer, alert on change
 sa -s high_stakes lineup # strategy override on any command
 ```
 
+## iPhone app
+
+A native SwiftUI app shares this crate as its core — same API layer, same
+analysis, same palette:
+
+```sh
+./ios/build.sh --open      # build the Rust core, generate the Xcode project
+```
+
+Everything crosses into Swift as JSON through a four-symbol C ABI
+(`ios/sa-ffi`), so adding a feature means adding a request variant rather than
+a new exported symbol. See [ios/README.md](ios/README.md).
+
+One platform limit worth knowing up front: iOS forbids spawning subprocesses,
+so the `claude-cli` backend cannot run there and the phone needs an Anthropic
+API key. Everything non-AI works without one.
+
 ## Background monitoring
 
 `sa daemon` runs the same analysis on a schedule and pushes an alert to a
@@ -148,6 +165,10 @@ src/
 ├── news.rs        # RSS ingest, roster-filtered
 ├── types.rs       # domain types incl. Transaction/TradedPick/Bracket/Trending
 └── config.rs      # YAML config (username + optional league_id)
+
+ios/
+├── sa-ffi/        # C ABI bridge over the same core
+└── SleeperAgent/  # SwiftUI app (Core/, Views/, Theme.swift)
 ```
 
 ## Notes

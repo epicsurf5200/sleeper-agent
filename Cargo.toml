@@ -1,3 +1,10 @@
+[workspace]
+members = [".", "ios/sa-ffi"]
+# Bare `cargo build`/`clippy`/`test` at the root stay scoped to the desktop
+# crate. The iOS bridge is built explicitly (`-p sa_ffi`, via ios/build.sh),
+# so CI and everyday desktop work are unaffected by its presence.
+default-members = ["."]
+
 [package]
 name = "sleeper_agent"
 version = "0.1.0"
