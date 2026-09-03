@@ -80,7 +80,8 @@ sa -s high_stakes lineup # strategy override on any command
 ## iPhone app
 
 A native SwiftUI app shares this crate as its core — same API layer, same
-analysis, same palette:
+analysis, same palette. It ships as **Fantasy Agent**, since Apple review is
+unfriendly to a third-party app fronting another company's product name:
 
 ```sh
 ./ios/build.sh --open      # build the Rust core, generate the Xcode project
@@ -168,7 +169,7 @@ src/
 
 ios/
 ├── sa-ffi/        # C ABI bridge over the same core
-└── SleeperAgent/  # SwiftUI app (Core/, Views/, Theme.swift)
+└── FantasyAgent/ # SwiftUI app (Core/, Views/, Theme.swift)
 ```
 
 ## Notes

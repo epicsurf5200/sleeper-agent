@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct SleeperAgentApp: App {
+struct FantasyAgentApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {

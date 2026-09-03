@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the iPhone app: Rust core -> static libs -> Xcode project.
 #
-#   ./ios/build.sh              # libs + generate SleeperAgent.xcodeproj
+#   ./ios/build.sh              # libs + generate FantasyAgent.xcodeproj
 #   ./ios/build.sh --open       # ...and open it in Xcode
 #   ./ios/build.sh --sim        # also build for the simulator
 #   ./ios/build.sh --debug      # debug profile (much faster to compile)
@@ -136,12 +136,12 @@ if [ "$UPLOAD" -eq 1 ]; then
     KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
     [ -f "$KEY_PATH" ] || { echo "!! No API key at $KEY_PATH" >&2; exit 1; }
 
-    ARCHIVE="$IOS_DIR/build/SleeperAgent.xcarchive"
+    ARCHIVE="$IOS_DIR/build/FantasyAgent.xcarchive"
     echo "==> Archiving (Release)"
     # -allowProvisioningUpdates lets Xcode create the distribution certificate
     # and App Store profile through the API key, so no manual portal work.
-    xcodebuild -project "$IOS_DIR/SleeperAgent.xcodeproj" \
-        -scheme SleeperAgent -sdk iphoneos -configuration Release \
+    xcodebuild -project "$IOS_DIR/FantasyAgent.xcodeproj" \
+        -scheme FantasyAgent -sdk iphoneos -configuration Release \
         -archivePath "$ARCHIVE" \
         -allowProvisioningUpdates \
         -authenticationKeyPath "$KEY_PATH" \
@@ -180,8 +180,8 @@ PLIST
 fi
 
 echo
-echo "==> Done: $IOS_DIR/SleeperAgent.xcodeproj"
+echo "==> Done: $IOS_DIR/FantasyAgent.xcodeproj"
 echo "    Open it, select your iPhone, then Run."
 echo "    For TestFlight: ASC_KEY_ID=... ASC_ISSUER_ID=... ./ios/build.sh --testflight"
-[ "$OPEN" -eq 1 ] && open "$IOS_DIR/SleeperAgent.xcodeproj"
+[ "$OPEN" -eq 1 ] && open "$IOS_DIR/FantasyAgent.xcodeproj"
 exit 0

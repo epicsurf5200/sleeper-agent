@@ -1,8 +1,13 @@
-# Sleeper Agent for iPhone
+# Fantasy Agent (iPhone)
 
 A native SwiftUI app sharing the desktop app's Rust core. Same data, same
 analysis, same palette — a phone-shaped front end rather than a second
 implementation.
+
+The phone app ships as **Fantasy Agent** (`dev.fantasy-agent.ios`) rather than
+Sleeper Agent. Apple review takes a dim view of a third-party app leading with
+another company's product name, and the App Store is the one place that
+judgement is enforced. The desktop app keeps its original name.
 
 ## Read this first: no subscription auth on iOS
 
@@ -26,6 +31,11 @@ CLI that can never run.
 ./ios/build.sh --open      # build the core, generate the project, open Xcode
 ```
 
+Signing is detected automatically: the Team ID comes from `$DEVELOPMENT_TEAM`
+or the OU field of an Apple Development certificate in your keychain, and lands
+in a gitignored `Local.xcconfig`. A Team ID identifies a developer account, so
+it is not committed.
+
 Then in Xcode: select your iPhone, set **Signing & Capabilities → Team**, Run.
 
 Flags:
@@ -35,18 +45,33 @@ Flags:
 | `--debug` | Debug profile — much faster to compile while iterating          |
 | `--sim`   | Also build the simulator slice                                  |
 | `--open`  | Open the generated project when finished                        |
+| `--testflight` | Archive Release and upload to TestFlight                    |
 
 The first release build of the core takes several minutes; it compiles the
 whole dependency tree for `aarch64-apple-ios`.
 
-## Signing, and the 7-day thing
+## TestFlight
 
-A **free Apple ID** works, but the provisioning profile expires after 7 days
-and the app stops launching until you rebuild and reinstall. That is Apple's
-limit on free accounts, not something the project can work around.
+```sh
+ASC_KEY_ID=XXXXXXXXXX ASC_ISSUER_ID=<uuid> ./ios/build.sh --testflight
+```
 
-The **Apple Developer Program** ($99/year) gives year-long profiles and
-TestFlight. Worth it only if you get tired of the weekly reinstall.
+Both values come from **App Store Connect → Users and Access → Integrations →
+App Store Connect API**. The matching `.p8` key is read from
+`~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8` (override with
+`ASC_KEY_PATH`). Nothing secret is written to the repo.
+
+`-allowProvisioningUpdates` is passed with those credentials, so Xcode creates
+the distribution certificate and App Store profile itself — an *Apple
+Development* certificate is not sufficient for App Store distribution, and this
+avoids a manual trip to the developer portal.
+
+An app record must already exist in App Store Connect for
+`dev.fantasy-agent.ios`, otherwise the upload is rejected. Create it under
+**Apps → +** before the first run.
+
+On a **free Apple ID** there is no TestFlight, and sideloaded builds stop
+launching after 7 days. The Apple Developer Program removes both limits.
 
 ## Layout
 
@@ -54,7 +79,7 @@ TestFlight. Worth it only if you get tired of the weekly reinstall.
 ios/
 ├── sa-ffi/           # Rust: C ABI over the shared core
 │   └── src/lib.rs    # one JSON request/response entry point
-├── SleeperAgent/
+├── FantasyAgent/
 │   ├── Core/         # SACore (FFI wrapper), Models, AppState
 │   ├── Views/        # one file per screen
 │   ├── Theme.swift   # palette shared with the desktop app
