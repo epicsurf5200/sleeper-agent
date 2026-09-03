@@ -52,19 +52,30 @@ whole dependency tree for `aarch64-apple-ios`.
 
 ## TestFlight
 
+Either credential works:
+
 ```sh
+# App Store Connect API key — preferred
 ASC_KEY_ID=XXXXXXXXXX ASC_ISSUER_ID=<uuid> ./ios/build.sh --testflight
+
+# or an Apple ID with an app-specific password
+APPLE_ID=you@example.com APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx \
+  ./ios/build.sh --testflight
 ```
 
-Both values come from **App Store Connect → Users and Access → Integrations →
-App Store Connect API**. The matching `.p8` key is read from
+The API key pair comes from **App Store Connect → Users and Access →
+Integrations → App Store Connect API**; the `.p8` is read from
 `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8` (override with
-`ASC_KEY_PATH`). Nothing secret is written to the repo.
+`ASC_KEY_PATH`). App-specific passwords are created at
+[appleid.apple.com](https://appleid.apple.com) → Sign-In and Security. Nothing
+secret is written to the repo, and the password is passed to `altool` through
+the environment rather than argv, where other processes could read it.
 
-`-allowProvisioningUpdates` is passed with those credentials, so Xcode creates
-the distribution certificate and App Store profile itself — an *Apple
-Development* certificate is not sufficient for App Store distribution, and this
-avoids a manual trip to the developer portal.
+The API key is preferred because `-allowProvisioningUpdates` can then create
+the distribution certificate and App Store profile for you. An *Apple
+Development* certificate does not cover App Store distribution, so on the
+Apple ID route that certificate has to already exist — add the account under
+**Xcode → Settings → Accounts** and let Xcode manage it.
 
 ### First-time setup
 

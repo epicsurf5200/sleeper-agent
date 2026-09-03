@@ -7,8 +7,9 @@
 #   ./ios/build.sh --debug      # debug profile (much faster to compile)
 #   ./ios/build.sh --testflight # archive and upload to TestFlight
 #
-# TestFlight needs App Store Connect API credentials:
-#   ASC_KEY_ID=XXXXXXXXXX ASC_ISSUER_ID=<uuid> ./ios/build.sh --testflight
+# TestFlight needs one of:
+#   ASC_KEY_ID=XXXXXXXXXX ASC_ISSUER_ID=<uuid>        (API key, preferred)
+#   APPLE_ID=you@example.com APP_SPECIFIC_PASSWORD=…  (appleid.apple.com)
 #
 # Then in Xcode: pick your device, set a signing team, and hit Run.
 set -euo pipefail
@@ -129,25 +130,52 @@ echo "==> Generating Xcode project"
 ( cd "$IOS_DIR" && xcodegen generate --quiet )
 
 if [ "$UPLOAD" -eq 1 ]; then
-    # App Store Connect API credentials. The key is a secret, so it is read
-    # from the standard location or the environment — never committed.
-    : "${ASC_KEY_ID:?set ASC_KEY_ID (App Store Connect > Users and Access > Integrations)}"
-    : "${ASC_ISSUER_ID:?set ASC_ISSUER_ID (the UUID on that same page)}"
-    KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
-    [ -f "$KEY_PATH" ] || { echo "!! No API key at $KEY_PATH" >&2; exit 1; }
-
     ARCHIVE="$IOS_DIR/build/FantasyAgent.xcarchive"
-    echo "==> Archiving (Release)"
-    # -allowProvisioningUpdates lets Xcode create the distribution certificate
-    # and App Store profile through the API key, so no manual portal work.
+    EXPORT="$IOS_DIR/build/export"
+
+    # Two ways to authenticate. The API key is preferred: it also lets Xcode
+    # create the distribution certificate and App Store profile itself, which
+    # an Apple Development certificate cannot cover. Apple ID plus an
+    # app-specific password is supported because it is what most people
+    # already have set up.
+    AUTH=()
+    MODE=""
+    if [ -n "${ASC_ISSUER_ID:-}" ]; then
+        : "${ASC_KEY_ID:?ASC_ISSUER_ID is set, so ASC_KEY_ID is required too}"
+        KEY_PATH="${ASC_KEY_PATH:-$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8}"
+        [ -f "$KEY_PATH" ] || { echo "!! No API key at $KEY_PATH" >&2; exit 1; }
+        AUTH=(-authenticationKeyPath "$KEY_PATH"
+              -authenticationKeyID "$ASC_KEY_ID"
+              -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+        MODE="apikey"
+    elif [ -n "${APPLE_ID:-}" ] && [ -n "${APP_SPECIFIC_PASSWORD:-}" ]; then
+        MODE="appleid"
+    else
+        cat >&2 <<'MSG'
+!! No upload credentials. Use either:
+
+   App Store Connect API key (preferred — can also create the distribution
+   certificate and profile for you):
+     ASC_KEY_ID=XXXXXXXXXX ASC_ISSUER_ID=<uuid> ./ios/build.sh --testflight
+
+   or an Apple ID with an app-specific password from appleid.apple.com:
+     APPLE_ID=you@example.com APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx \
+       ./ios/build.sh --testflight
+MSG
+        exit 1
+    fi
+
+    echo "==> Archiving (Release, auth: $MODE)"
     xcodebuild -project "$IOS_DIR/FantasyAgent.xcodeproj" \
         -scheme FantasyAgent -sdk iphoneos -configuration Release \
         -archivePath "$ARCHIVE" \
-        -allowProvisioningUpdates \
-        -authenticationKeyPath "$KEY_PATH" \
-        -authenticationKeyID "$ASC_KEY_ID" \
-        -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+        -allowProvisioningUpdates "${AUTH[@]}" \
         archive
+
+    # With an API key xcodebuild can upload directly; with an Apple ID it
+    # exports an .ipa that altool then ships.
+    DESTINATION="upload"
+    [ "$MODE" = "appleid" ] && DESTINATION="export"
 
     cat > "$IOS_DIR/build/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -157,24 +185,33 @@ if [ "$UPLOAD" -eq 1 ]; then
     <key>method</key>            <string>app-store-connect</string>
     <key>teamID</key>            <string>$TEAM</string>
     <key>uploadSymbols</key>     <true/>
-    <key>destination</key>       <string>upload</string>
+    <key>destination</key>       <string>$DESTINATION</string>
     <key>signingStyle</key>      <string>automatic</string>
 </dict>
 </plist>
 PLIST
 
-    echo "==> Uploading to TestFlight"
+    echo "==> Exporting"
+    rm -rf "$EXPORT"
     xcodebuild -exportArchive \
         -archivePath "$ARCHIVE" \
         -exportOptionsPlist "$IOS_DIR/build/ExportOptions.plist" \
-        -exportPath "$IOS_DIR/build/export" \
-        -allowProvisioningUpdates \
-        -authenticationKeyPath "$KEY_PATH" \
-        -authenticationKeyID "$ASC_KEY_ID" \
-        -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+        -exportPath "$EXPORT" \
+        -allowProvisioningUpdates "${AUTH[@]}"
+
+    if [ "$MODE" = "appleid" ]; then
+        IPA="$(find "$EXPORT" -name '*.ipa' | head -1)"
+        [ -n "$IPA" ] || { echo "!! No .ipa was produced" >&2; exit 1; }
+        echo "==> Uploading $IPA"
+        # Password is passed via the environment so it never lands in argv,
+        # where any other process on the machine could read it.
+        APP_SPECIFIC_PASSWORD="$APP_SPECIFIC_PASSWORD" \
+        xcrun altool --upload-app -f "$IPA" -t ios \
+            -u "$APPLE_ID" -p "@env:APP_SPECIFIC_PASSWORD"
+    fi
 
     echo
-    echo "==> Uploaded. Processing takes a few minutes; the build then appears"
+    echo "==> Uploaded. Processing takes a few minutes, then the build appears"
     echo "    in App Store Connect > TestFlight."
     exit 0
 fi
