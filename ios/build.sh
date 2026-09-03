@@ -165,10 +165,15 @@ MSG
         exit 1
     fi
 
-    echo "==> Archiving (Release, auth: $MODE)"
+    # App Store Connect rejects a build number it has already seen, so this
+    # cannot stay pinned at 1. Commit count is monotonic, needs no state file,
+    # and is reproducible from any checkout.
+    BUILD_NUMBER="${BUILD_NUMBER:-$(git -C "$REPO" rev-list --count HEAD 2>/dev/null || echo 1)}"
+    echo "==> Archiving (Release, auth: $MODE, build $BUILD_NUMBER)"
     xcodebuild -project "$IOS_DIR/FantasyAgent.xcodeproj" \
         -scheme FantasyAgent -sdk iphoneos -configuration Release \
         -archivePath "$ARCHIVE" \
+        CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
         -allowProvisioningUpdates "${AUTH[@]}" \
         archive
 

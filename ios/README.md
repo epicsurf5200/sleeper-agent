@@ -77,6 +77,10 @@ Development* certificate does not cover App Store distribution, so on the
 Apple ID route that certificate has to already exist — add the account under
 **Xcode → Settings → Accounts** and let Xcode manage it.
 
+The build number is set from the repo's commit count, since App Store Connect
+rejects a number it has already accepted. Override with `BUILD_NUMBER=…` if you
+need to.
+
 ### First-time setup
 
 `ios/asc.py` is a small dependency-free client for the same credentials
