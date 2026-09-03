@@ -1,2 +1,4 @@
 build/
 *.xcodeproj/
+Local.xcconfig
+ExportOptions.plist
