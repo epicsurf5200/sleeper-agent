@@ -66,9 +66,24 @@ the distribution certificate and App Store profile itself — an *Apple
 Development* certificate is not sufficient for App Store distribution, and this
 avoids a manual trip to the developer portal.
 
-An app record must already exist in App Store Connect for
-`dev.fantasy-agent.ios`, otherwise the upload is rejected. Create it under
-**Apps → +** before the first run.
+### First-time setup
+
+`ios/asc.py` is a small dependency-free client for the same credentials
+(it signs the ES256 JWT with `openssl`, since neither PyJWT nor
+`cryptography` ships with macOS Python):
+
+```sh
+export ASC_KEY_ID=XXXXXXXXXX ASC_ISSUER_ID=<uuid>
+./ios/asc.py whoami                        # check the credentials work
+./ios/asc.py register-bundle dev.fantasy-agent.ios "Fantasy Agent"
+./ios/asc.py apps                          # list what already exists
+```
+
+The **app record itself must be created in the web UI** — the App Store
+Connect API exposes `apps` as read/update only, with no create. Go to
+**App Store Connect → Apps → + → New App**, pick iOS, select the
+`dev.fantasy-agent.ios` bundle ID, and choose a name and SKU. Upload is
+rejected until that record exists.
 
 On a **free Apple ID** there is no TestFlight, and sideloaded builds stop
 launching after 7 days. The Apple Developer Program removes both limits.
