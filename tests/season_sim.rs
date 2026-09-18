@@ -535,6 +535,9 @@ async fn simulate_full_season() {
         backend: "api".into(),
         model: "claude-sim".into(),
         max_tokens: 2048,
+        // Everything else (thinking budget, per-feature backends) is
+        // irrelevant on the `api` backend, which this sim pins itself to.
+        ..Default::default()
     })
     .unwrap();
 

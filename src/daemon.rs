@@ -185,27 +185,48 @@ async fn cycle(
             alerts.push(a);
         }
     }
-    if t.better_lineup {
-        match lineup_alert(anthropic, &roster, &settings, &news_items, cfg, week).await {
-            Ok(Some(a)) => alerts.push(a),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "lineup trigger failed"),
+
+    // The three AI triggers are independent, so run them concurrently rather
+    // than end to end — a cycle costs the slowest call instead of their sum.
+    // Each is 10-60s, so this is the difference between a ~2 minute cycle and
+    // a ~1 minute one. Note this puts up to three completions in flight at
+    // once; on the `claude-cli` backend that means three CLI processes, which
+    // matters on a memory-tight LXC (see deploy/README.md).
+    let lineup_fut = async {
+        if !t.better_lineup {
+            return None;
         }
-    }
-    if t.waiver {
-        match waiver_alert(session, anthropic, cfg, &news_items).await {
-            Ok(Some(a)) => alerts.push(a),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "waiver trigger failed"),
+        lineup_alert(anthropic, &roster, &settings, &news_items, cfg, week)
+            .await
+            .map_err(|e| tracing::warn!(error = %e, "lineup trigger failed"))
+            .ok()
+            .flatten()
+    };
+    let waiver_fut = async {
+        if !t.waiver {
+            return None;
         }
-    }
-    if t.trade {
-        match trade_alert(session, anthropic, cfg, &roster, &news_items, week).await {
-            Ok(Some(a)) => alerts.push(a),
-            Ok(None) => {}
-            Err(e) => tracing::warn!(error = %e, "trade trigger failed"),
+        waiver_alert(session, anthropic, cfg, &news_items)
+            .await
+            .map_err(|e| tracing::warn!(error = %e, "waiver trigger failed"))
+            .ok()
+            .flatten()
+    };
+    let trade_fut = async {
+        if !t.trade {
+            return None;
         }
-    }
+        trade_alert(session, anthropic, cfg, &roster, &news_items, week)
+            .await
+            .map_err(|e| tracing::warn!(error = %e, "trade trigger failed"))
+            .ok()
+            .flatten()
+    };
+
+    // Collected in a fixed order so alert ordering stays deterministic
+    // regardless of which completion happens to return first.
+    let (lineup_a, waiver_a, trade_a) = tokio::join!(lineup_fut, waiver_fut, trade_fut);
+    alerts.extend([lineup_a, waiver_a, trade_a].into_iter().flatten());
 
     let mut sent = 0;
     for alert in alerts {

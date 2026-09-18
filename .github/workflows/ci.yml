@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [master, sleeper-agent]
+  pull_request:
+  # Build artifacts on demand without waiting for a merge.
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: clippy · test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # No `cargo fmt --check` gate: this codebase is written in a compact
+      # style stock rustfmt would rewrite wholesale, so the gate would fail on
+      # every file rather than catch anything real.
+      #
+      # The GUI is only clippy'd on macOS below — doing it here would drag in
+      # the whole X11/Wayland dev-package tree for no extra coverage.
+      - run: cargo clippy --all-targets --no-default-features
+      - run: cargo test --no-default-features
+
+  build:
+    name: build ${{ matrix.name }}
+    # Only after a merge (or a manual run) — PR builds would just burn minutes.
+    if: github.event_name != 'pull_request'
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Headless binary for the Proxmox/systemd deployment. Built on 22.04
+          # (glibc 2.35) so it also runs on Debian 12 (2.36); building on a
+          # newer runner would produce a binary the target can't load.
+          - name: linux-x86_64 (headless)
+            os: ubuntu-22.04
+            artifact: sa-linux-x86_64
+          # Desktop app, Apple Silicon.
+          - name: macos-arm64 (app bundle)
+            os: macos-14
+            artifact: SleeperAgent-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build headless binary
+        if: runner.os == 'Linux'
+        run: cargo build --release --bin sa --no-default-features
+
+      # The `check` job skips the GUI to avoid Linux windowing deps, so this is
+      # the only place gui.rs gets linted.
+      - name: Clippy (GUI)
+        if: runner.os == 'macOS'
+        run: cargo clippy --all-targets --features gui
+
+      - name: Build app bundle
+        if: runner.os == 'macOS'
+        # make-app.sh does the cargo build itself, then assembles the bundle.
+        # Point it at the workspace instead of /Applications.
+        run: |
+          mkdir -p dist
+          ./scripts/make-app.sh "$PWD/dist"
+          # Zip rather than upload the .app directly — actions/upload-artifact
+          # does not preserve the executable bit, which would break the bundle.
+          ditto -c -k --keepParent "dist/Sleeper Agent.app" "dist/SleeperAgent.zip"
+
+      - name: Stage Linux artifact
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp target/release/sa dist/sa
+          cp -r deploy dist/deploy
+          cp examples/config.yaml dist/config.yaml.example
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/sa
+            dist/deploy
+            dist/config.yaml.example
+            dist/SleeperAgent.zip
+          if-no-files-found: error
+          retention-days: 90

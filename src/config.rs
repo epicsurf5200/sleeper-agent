@@ -16,6 +16,39 @@ pub struct AnthropicConfig {
     pub model: String,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// Per-feature backend overrides. Each is "" (inherit `backend`), "api",
+    /// or "claude-cli" — so the fast/metered API can drive the interactive
+    /// features while the background daemon stays on the subscription CLI,
+    /// or vice versa.
+    #[serde(default)]
+    pub features: FeatureBackends,
+    /// Extended-thinking budget for the `claude-cli` backend, in tokens.
+    ///
+    /// The CLI enables extended thinking by default, which for these prompts
+    /// spent ~75% of every response on discarded thinking tokens and made a
+    /// lineup call take 14-30s instead of ~7s. Analysis here is short and
+    /// well-structured, so the default is 0 (off). Raise it if you want the
+    /// model to deliberate harder at the cost of latency.
+    #[serde(default)]
+    pub thinking_tokens: u32,
+}
+
+/// Which backend each AI-backed feature uses. Empty string inherits
+/// `anthropic.backend`; otherwise "api" or "claude-cli".
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FeatureBackends {
+    #[serde(default)]
+    pub lineup: String,
+    #[serde(default)]
+    pub waiver: String,
+    #[serde(default)]
+    pub trade: String,
+    #[serde(default)]
+    pub draft: String,
+    #[serde(default)]
+    pub trending: String,
+    #[serde(default)]
+    pub daemon: String,
 }
 
 fn default_model() -> String {
@@ -277,6 +310,34 @@ impl Config {
             let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
         }
         Ok(())
+    }
+
+    /// Defaults for the iOS app.
+    ///
+    /// iOS cannot spawn subprocesses, so the Claude CLI backend is
+    /// unreachable there. Pinning `backend` to "api" makes that explicit:
+    /// without a key the app reports a missing key, rather than "auto"
+    /// resolving to a CLI that can never run.
+    pub fn for_ios() -> Self {
+        let mut c = Self {
+            anthropic: AnthropicConfig {
+                backend: "api".into(),
+                model: default_model(),
+                max_tokens: default_max_tokens(),
+                ..Default::default()
+            },
+            sleeper: SleeperConfig::default(),
+            settings: Settings::default(),
+            notify: NotifyConfig::default(),
+            daemon: DaemonConfig::default(),
+            base_dir: PathBuf::new(),
+            path: PathBuf::new(),
+            api_key_from_env: false,
+            webhook_from_env: false,
+        };
+        // Context files are desktop paths; the phone has no equivalent.
+        c.settings.context_files.clear();
+        c
     }
 
     pub fn default_path() -> PathBuf {

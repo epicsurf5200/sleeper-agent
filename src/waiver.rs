@@ -17,7 +17,7 @@ use crate::types::*;
 use anyhow::Result;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WaiverCandidate {
     pub priority: u32,
     pub player: Player,
@@ -27,14 +27,14 @@ pub struct WaiverCandidate {
     pub reasoning: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DropCandidate {
     pub player: Player,
     pub metrics: PlayerMetrics,
     pub net_ros_delta: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WaiverReport {
     pub candidates: Vec<WaiverCandidate>,
     pub raw: String,
@@ -235,5 +235,72 @@ async fn ai_polish(
         if tx_block.is_empty() { "(none)" } else { &tx_block },
         if news_block.is_empty() { "(none)" } else { &news_block },
     );
-    anthropic.complete(&system, &user).await
+    anthropic.complete_for(crate::anthropic::AiFeature::Waiver, &system, &user).await
+}
+
+/// Ask Claude why a player is suddenly being added or dropped league-wide,
+/// and whether it matters for this roster.
+///
+/// Sleeper reports the raw add/drop counts but never the reason, which is the
+/// part that decides whether a spike is an injury backfill worth chasing or
+/// noise off a single big game.
+pub async fn explain_trending(
+    anthropic: &crate::anthropic::Anthropic,
+    player: &Player,
+    count: u64,
+    direction: TrendDirection,
+    my_roster: &Roster,
+    news: &[NewsItem],
+    strat: Strategy,
+) -> anyhow::Result<String> {
+    let system = format!(
+        "You are a fantasy football analyst. Explain concisely why a player is trending. \
+         Strategy: {}. Be specific about the likely cause (injury to a team-mate, role \
+         change, schedule, a single outlier game) and say plainly when you are not sure. \
+         Never invent injuries or transactions that are not supported by the data given.",
+        strat.guidance()
+    );
+
+    let roster_block = my_roster
+        .players
+        .iter()
+        .map(|p| format!("{} ({} {})", p.name, p.position, p.team))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let news_block = if news.is_empty() {
+        "(no recent headlines)".to_string()
+    } else {
+        news.iter()
+            .take(12)
+            .map(|n| format!("- {}", n.title))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let verb = match direction {
+        TrendDirection::Add => "ADDED",
+        TrendDirection::Drop => "DROPPED",
+    };
+
+    let user = format!(
+        "Player: {name} ({pos} {team}), status {status}, projected {proj:.1} this week.\n\
+         Being {verb} by {count} teams league-wide in the last 24 hours.\n\n\
+         === RECENT HEADLINES ===\n{news_block}\n\n\
+         === MY ROSTER ===\n{roster_block}\n\n\
+         Answer in three short sections:\n\
+         WHY: the most likely reason for the move, with your confidence.\n\
+         OUTLOOK: what to expect from him over the next few weeks.\n\
+         FOR ME: whether he improves this specific roster, and who he would replace. \
+         Say \"no action\" if he does not.",
+        name = player.name,
+        pos = player.position,
+        team = player.team,
+        status = player.status,
+        proj = player.projected_points,
+    );
+
+    anthropic
+        .complete_for(crate::anthropic::AiFeature::Trending, &system, &user)
+        .await
 }

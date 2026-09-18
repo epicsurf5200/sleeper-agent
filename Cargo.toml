@@ -1,3 +1,10 @@
+[workspace]
+members = [".", "ios/sa-ffi"]
+# Bare `cargo build`/`clippy`/`test` at the root stay scoped to the desktop
+# crate. The iOS bridge is built explicitly (`-p sa_ffi`, via ios/build.sh),
+# so CI and everyday desktop work are unaffected by its presence.
+default-members = ["."]
+
 [package]
 name = "sleeper_agent"
 version = "0.1.0"
@@ -20,7 +27,7 @@ required-features = ["gui"]
 
 [features]
 default = ["gui"]
-gui = ["dep:eframe"]
+gui = ["dep:eframe", "dep:image"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -41,4 +48,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 dirs = "5"
 parking_lot = "0.12"
 eframe = { version = "0.29", optional = true }
+# Decoding player headshots for the GUI only — the headless binary never
+# touches images, so this stays behind the `gui` feature.
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
 futures = "0.3"

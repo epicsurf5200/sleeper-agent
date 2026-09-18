@@ -16,13 +16,13 @@ pub struct DraftManager<'a> {
     pub my_team_name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DraftSuggestion {
     pub picks: Vec<SuggestedPick>,
     pub raw: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SuggestedPick {
     pub rank: u32,
     pub name: String,
@@ -134,7 +134,7 @@ impl<'a> DraftManager<'a> {
             if news_block.is_empty() { "(none)" } else { &news_block },
         );
 
-        let raw = self.anthropic.complete(&system, &user).await?;
+        let raw = self.anthropic.complete_for(crate::anthropic::AiFeature::Draft, &system, &user).await?;
         // Belt-and-suspenders: never surface a player who's already off the board.
         let picks = parse_suggestions(&raw)
             .into_iter()

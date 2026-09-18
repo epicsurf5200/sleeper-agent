@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "sa", version, about = "sleeper-agent — autonomous Claude-powered manager for Sleeper leagues")]
+#[command(name = "sa", version = sleeper_agent::build_info::LONG_VERSION, about = "sleeper-agent — autonomous Claude-powered manager for Sleeper leagues")]
 struct Cli {
     /// Path to config.yaml (defaults to ./config.yaml or $XDG_CONFIG_HOME/sleeper-agent/config.yaml).
     #[arg(short, long, global = true)]
@@ -199,10 +199,12 @@ async fn main() -> Result<()> {
             cmd_trade(&session, &anthropic()?, &news_fetcher, &cfg, partner, send, receive).await
         }
         Command::Daemon { once, dry_run } => {
+            // The daemon is configured as one unit, so pin every completion it
+            // makes to the daemon backend rather than to each sub-feature's.
             daemon::run(
                 &cfg,
                 &session,
-                &anthropic()?,
+                &anthropic()?.pinned_to(anthropic::AiFeature::Daemon),
                 daemon::DaemonArgs { once, dry_run },
             )
             .await

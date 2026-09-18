@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)]
 pub struct NewsItem {
     pub title: String,
