@@ -1,8 +1,9 @@
-# XcodeGen spec for the iPhone app.
+# XcodeGen spec for the iPhone app — the source of truth for the project.
 #
-# The project file is generated rather than committed: a .pbxproj is
-# merge-hostile and impossible to review, whereas this is both. Regenerate
-# with ./ios/build.sh (which installs XcodeGen if needed).
+# The .xcodeproj is committed only because Xcode Cloud needs to find a project
+# and a shared scheme in the repo; it is regenerated from this file by
+# ./ios/build.sh (and by ci_scripts/ci_post_clone.sh on Xcode Cloud), so
+# never edit it by hand.
 
 name: FantasyAgent
 options:
@@ -46,8 +47,11 @@ targets:
         # Let Xcode synthesise Info.plist from the INFOPLIST_KEY_* values
         # below, so there is no plist to keep in sync by hand.
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        # Both come from Local.xcconfig, which build.sh writes: the version
+        # from ios/VERSION, the build number from the commit count (or the
+        # Xcode Cloud build number on CI).
+        MARKETING_VERSION: "$(FA_VERSION)"
+        CURRENT_PROJECT_VERSION: "$(FA_BUILD)"
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: Fantasy Agent
         # Dark-only, matching the desktop app's palette.
@@ -73,3 +77,15 @@ targets:
     dependencies:
       - sdk: Security.framework
       - sdk: SystemConfiguration.framework
+
+# An explicit scheme is written to xcshareddata, which Xcode Cloud requires;
+# XcodeGen's implicit per-target schemes are not shared.
+schemes:
+  FantasyAgent:
+    build:
+      targets:
+        FantasyAgent: all
+    run:
+      config: Debug
+    archive:
+      config: Release

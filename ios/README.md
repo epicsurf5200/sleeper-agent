@@ -103,6 +103,34 @@ rejected until that record exists.
 On a **free Apple ID** there is no TestFlight, and sideloaded builds stop
 launching after 7 days. The Apple Developer Program removes both limits.
 
+## Versioning
+
+Two numbers identify every build in App Store Connect:
+
+| Number | Source | When it changes |
+| ------ | ------ | --------------- |
+| Version (`MARKETING_VERSION`) | `ios/VERSION` | You bump it — `echo 0.2.0 > ios/VERSION` and commit |
+| Build (`CURRENT_PROJECT_VERSION`) | commit count locally, Xcode Cloud's build number on CI | Automatically, every build |
+
+`build.sh` writes both into the gitignored `Local.xcconfig`, which the project
+reads through `$(FA_VERSION)` and `$(FA_BUILD)`. Nothing else needs touching:
+App Store Connect groups TestFlight builds under the version, and rejects any
+build number it has already seen, so the build number must only ever go up.
+
+## Automatic TestFlight deploys (Xcode Cloud)
+
+Every push to `main` is built by Xcode Cloud and delivered to the Internal
+Testers group on TestFlight — no Mac involved, signing handled by Apple. The
+workflow lives in App Store Connect (**Fantasy Football Agent → Xcode Cloud**),
+and `ci_scripts/ci_post_clone.sh` is what makes a stock Apple runner able to
+build this project: it installs a minimal Rust toolchain and XcodeGen, then
+runs `./ios/build.sh` to compile the core and regenerate the project before
+`xcodebuild` starts.
+
+Xcode Cloud stamps its own build number on the archive; the workflow's **Next
+Build Number** was set well above the local commit count so the two never
+collide. Manual `./ios/build.sh --testflight` uploads still work alongside it.
+
 ## Layout
 
 ```
@@ -114,13 +142,16 @@ ios/
 │   ├── Views/        # one file per screen
 │   ├── Theme.swift   # palette shared with the desktop app
 │   └── sa_ffi.h      # C header, mirrors sa-ffi/src/lib.rs
-├── project.yml       # XcodeGen spec — the .xcodeproj is generated
+├── ci_scripts/       # Xcode Cloud hook: installs Rust + XcodeGen, builds the core
+├── project.yml       # XcodeGen spec — the source of truth for the project
+├── VERSION           # marketing version, e.g. 0.1.1
 └── build.sh
 ```
 
-The `.xcodeproj` is generated and gitignored on purpose: a `.pbxproj` is
-merge-hostile and effectively unreviewable, whereas `project.yml` is both.
-Regenerate any time with `./ios/build.sh`.
+`project.yml` is the source of truth; the `.xcodeproj` is regenerated from it
+on every build and is committed only because Xcode Cloud has to find a project
+and a shared scheme in the repo. Never edit the `.pbxproj` by hand — change
+`project.yml` and run `./ios/build.sh`.
 
 ## How the bridge works
 
