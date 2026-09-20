@@ -40,6 +40,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.fantasy-agent.ios
+        # iPhone-only: keeps App Review (and the screenshot requirement) off iPad.
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Let Xcode synthesise Info.plist from the INFOPLIST_KEY_* values
         # below, so there is no plist to keep in sync by hand.
         GENERATE_INFOPLIST_FILE: YES

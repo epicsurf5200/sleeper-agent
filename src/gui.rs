@@ -1292,15 +1292,57 @@ impl GuiApp {
         ui.add_space(6.0);
         ui.separator();
         ui.strong("Evaluate a specific trade");
-        egui::Grid::new("trade_in").num_columns(2).show(ui, |ui| {
+        let data = self.data();
+        let my_team_id = data.roster.as_ref().map(|r| r.team_id.as_str());
+        let partners: Vec<&Roster> = data
+            .all_rosters
+            .iter()
+            .filter(|r| Some(r.team_id.as_str()) != my_team_id)
+            .collect();
+        let partner_roster = partners
+            .iter()
+            .find(|r| r.team_name.eq_ignore_ascii_case(self.trade_partner.trim()))
+            .copied();
+        let my_players = data.roster.as_ref().map(|r| r.players.as_slice()).unwrap_or(&[]);
+        let partner_players = partner_roster.map(|r| r.players.as_slice()).unwrap_or(&[]);
+
+        egui::Grid::new("trade_in").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
             ui.label("Partner team:");
-            ui.text_edit_singleline(&mut self.trade_partner);
+            let selected = if self.trade_partner.is_empty() {
+                "Choose a team…".to_string()
+            } else {
+                self.trade_partner.clone()
+            };
+            egui::ComboBox::from_id_salt("trade_partner_pick")
+                .width(260.0)
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if partners.is_empty() {
+                        ui.label("No rosters loaded yet — refresh.");
+                    }
+                    for r in &partners {
+                        let label = match &r.owner {
+                            Some(o) if !o.is_empty() && o != &r.team_name => {
+                                format!("{} ({})", r.team_name, o)
+                            }
+                            _ => r.team_name.clone(),
+                        };
+                        let is_current = self.trade_partner == r.team_name;
+                        if ui.selectable_label(is_current, label).clicked() && !is_current {
+                            self.trade_partner = r.team_name.clone();
+                            // The receive list named players on the old partner.
+                            self.trade_receive.clear();
+                        }
+                    }
+                });
             ui.end_row();
+
             ui.label("You send:");
-            ui.text_edit_singleline(&mut self.trade_send);
+            Self::player_picker(ui, "trade_send_pick", my_players, &mut self.trade_send);
             ui.end_row();
+
             ui.label("You receive:");
-            ui.text_edit_singleline(&mut self.trade_receive);
+            Self::player_picker(ui, "trade_recv_pick", partner_players, &mut self.trade_receive);
             ui.end_row();
         });
         let busy = self.is_busy("trade");
@@ -1635,6 +1677,63 @@ impl GuiApp {
             }
             busy.lock().remove(key);
             ctx.request_repaint();
+        });
+    }
+
+    /// A comma-separated player list (`list`) with a dropdown that appends
+    /// players from `pool` and a removable chip per chosen player. The text
+    /// field stays editable so names can still be typed.
+    fn player_picker(ui: &mut egui::Ui, id: &str, pool: &[Player], list: &mut String) {
+        let mut sorted: Vec<&Player> = pool.iter().collect();
+        sorted.sort_by(|a, b| {
+            (a.position.to_string(), std::cmp::Reverse(a.projected_points.to_bits()))
+                .cmp(&(b.position.to_string(), std::cmp::Reverse(b.projected_points.to_bits())))
+        });
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(id)
+                    .width(260.0)
+                    .selected_text("Add player…")
+                    .show_ui(ui, |ui| {
+                        if sorted.is_empty() {
+                            ui.label("No players — pick a team first.");
+                        }
+                        let chosen = split_names(list);
+                        for p in &sorted {
+                            let already = chosen.iter().any(|n| n.eq_ignore_ascii_case(&p.name));
+                            let label =
+                                format!("{}  {} · {}  {:.1}", p.position, p.name, p.team, p.projected_points);
+                            if ui
+                                .add_enabled(!already, egui::SelectableLabel::new(false, label))
+                                .clicked()
+                            {
+                                if !list.trim().is_empty() {
+                                    list.push_str(", ");
+                                }
+                                list.push_str(&p.name);
+                            }
+                        }
+                    });
+                ui.add(
+                    egui::TextEdit::singleline(list)
+                        .desired_width(260.0)
+                        .hint_text("or type names, comma separated"),
+                );
+            });
+            let chosen = split_names(list);
+            if !chosen.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    let mut remove = None;
+                    for n in &chosen {
+                        if ui.small_button(format!("{n} ×")).on_hover_text("Remove").clicked() {
+                            remove = Some(n.clone());
+                        }
+                    }
+                    if let Some(r) = remove {
+                        *list = chosen.into_iter().filter(|n| n != &r).collect::<Vec<_>>().join(", ");
+                    }
+                });
+            }
         });
     }
 
@@ -2185,4 +2284,9 @@ pub fn run(
         }),
     )
     .map_err(|e| anyhow::anyhow!("eframe: {e}"))
+}
+
+/// Split a comma-separated list of names, trimming and dropping empties.
+fn split_names(s: &str) -> Vec<String> {
+    s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
