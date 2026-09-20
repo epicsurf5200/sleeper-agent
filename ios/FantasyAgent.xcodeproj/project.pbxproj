@@ -1,0 +1,463 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0430A9DB92BAFCC9B8E86F23 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7361B8746D9FF0E8F2D73B8 /* AppState.swift */; };
+		04713DDCE9FF3166B8DFFC86 /* PlayerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2CDD106E7F3B7416EA5AF0E /* PlayerDetailView.swift */; };
+		11CAD1461E1ED5FE5592F15D /* LeagueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5053CD3E7DC6B075DD7C4B2 /* LeagueView.swift */; };
+		157C7125E375AF70EB726777 /* SACore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 773410B5ED37E998A9CFC0B8 /* SACore.swift */; };
+		27DAFC746D2B69584947B8F9 /* RosterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B324E5F3868AF96C4F3377C8 /* RosterView.swift */; };
+		44BEBBF1E5F82BD151E2FFCE /* LineupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4C53D5E3EBDF5D5098F32EF /* LineupView.swift */; };
+		6281492A8C4DAC5001A8BB82 /* TrendingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F99F5F430A99725E1ADDF6D3 /* TrendingView.swift */; };
+		6E39B1929A8BF9B30B90B2D2 /* MatchupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D8D824DA48F538EACE827B /* MatchupView.swift */; };
+		7857E9DD458D98D722076AD2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6EA02A0CE931B65FE99E9256 /* Assets.xcassets */; };
+		84ADCA92D2F76F9231C16D8B /* TradesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A176149D5CD09502FE75F81C /* TradesView.swift */; };
+		8887657F96D7572EBFABEBE4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF3E5753C4043374F5C35D84 /* SettingsView.swift */; };
+		A49FB3E7EA5520E82D478517 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 337852E2F4D9B484F25BFE54 /* Security.framework */; };
+		B1E8E6F75F04A16F9251931F /* FantasyAgentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C99BBEB0EFEE875B602C531C /* FantasyAgentApp.swift */; };
+		CF212E8403DCD09BE01C7D56 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED9B47FA341B27A42BBBF199 /* Models.swift */; };
+		D5A7A8D92A95F3CEC94B7C16 /* WaiverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF8744EBADE379490C7EC058 /* WaiverView.swift */; };
+		D9D0E5F3C999243E8D5B65B6 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E0310DEB011EB80B38C9106 /* Theme.swift */; };
+		FCF5BE5E97A18296676E32AF /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 58EF7C9EF67BF1553454929A /* SystemConfiguration.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		337852E2F4D9B484F25BFE54 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		3E0310DEB011EB80B38C9106 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		58EF7C9EF67BF1553454929A /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
+		60C3BA669842DDA890B5D7A4 /* FantasyAgent-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "FantasyAgent-Bridging-Header.h"; sourceTree = "<group>"; };
+		6EA02A0CE931B65FE99E9256 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		773410B5ED37E998A9CFC0B8 /* SACore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SACore.swift; sourceTree = "<group>"; };
+		81D8D824DA48F538EACE827B /* MatchupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchupView.swift; sourceTree = "<group>"; };
+		A176149D5CD09502FE75F81C /* TradesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradesView.swift; sourceTree = "<group>"; };
+		A1A2543AF130240E310FFBD0 /* sa_ffi.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = sa_ffi.h; sourceTree = "<group>"; };
+		A4C53D5E3EBDF5D5098F32EF /* LineupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineupView.swift; sourceTree = "<group>"; };
+		B324E5F3868AF96C4F3377C8 /* RosterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosterView.swift; sourceTree = "<group>"; };
+		BF8744EBADE379490C7EC058 /* WaiverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaiverView.swift; sourceTree = "<group>"; };
+		C2CDD106E7F3B7416EA5AF0E /* PlayerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerDetailView.swift; sourceTree = "<group>"; };
+		C7361B8746D9FF0E8F2D73B8 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		C99BBEB0EFEE875B602C531C /* FantasyAgentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FantasyAgentApp.swift; sourceTree = "<group>"; };
+		CF3E5753C4043374F5C35D84 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		D5053CD3E7DC6B075DD7C4B2 /* LeagueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeagueView.swift; sourceTree = "<group>"; };
+		E8D29B456BC79DAAEFD92DDF /* FantasyAgent.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FantasyAgent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ED9B47FA341B27A42BBBF199 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F99F5F430A99725E1ADDF6D3 /* TrendingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendingView.swift; sourceTree = "<group>"; };
+		"TEMP_4CC7B33A-7A7B-4703-9C7D-45701B26EAF4" /* Local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1CAA017FA8D21D18A096AEAE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A49FB3E7EA5520E82D478517 /* Security.framework in Frameworks */,
+				FCF5BE5E97A18296676E32AF /* SystemConfiguration.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		584AF614123DCFD8F3F4A96E /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				337852E2F4D9B484F25BFE54 /* Security.framework */,
+				58EF7C9EF67BF1553454929A /* SystemConfiguration.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		5DA7F30D4C49F619717AAFE6 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				C7361B8746D9FF0E8F2D73B8 /* AppState.swift */,
+				ED9B47FA341B27A42BBBF199 /* Models.swift */,
+				A1A2543AF130240E310FFBD0 /* sa_ffi.h */,
+				773410B5ED37E998A9CFC0B8 /* SACore.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		691EA708B6EEF472F67D586D /* FantasyAgent */ = {
+			isa = PBXGroup;
+			children = (
+				60C3BA669842DDA890B5D7A4 /* FantasyAgent-Bridging-Header.h */,
+				C99BBEB0EFEE875B602C531C /* FantasyAgentApp.swift */,
+				3E0310DEB011EB80B38C9106 /* Theme.swift */,
+				5DA7F30D4C49F619717AAFE6 /* Core */,
+				B410E769E49844165FEA06BD /* Resources */,
+				7B979BCFB2FF8EAD0C813EFF /* Views */,
+			);
+			path = FantasyAgent;
+			sourceTree = "<group>";
+		};
+		6BBF3A75248ED38158EBBD60 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E8D29B456BC79DAAEFD92DDF /* FantasyAgent.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		7B979BCFB2FF8EAD0C813EFF /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				D5053CD3E7DC6B075DD7C4B2 /* LeagueView.swift */,
+				A4C53D5E3EBDF5D5098F32EF /* LineupView.swift */,
+				81D8D824DA48F538EACE827B /* MatchupView.swift */,
+				C2CDD106E7F3B7416EA5AF0E /* PlayerDetailView.swift */,
+				B324E5F3868AF96C4F3377C8 /* RosterView.swift */,
+				CF3E5753C4043374F5C35D84 /* SettingsView.swift */,
+				A176149D5CD09502FE75F81C /* TradesView.swift */,
+				F99F5F430A99725E1ADDF6D3 /* TrendingView.swift */,
+				BF8744EBADE379490C7EC058 /* WaiverView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		B410E769E49844165FEA06BD /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6EA02A0CE931B65FE99E9256 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		DA852702BBDB2B5CDBBD4ABB = {
+			isa = PBXGroup;
+			children = (
+				691EA708B6EEF472F67D586D /* FantasyAgent */,
+				584AF614123DCFD8F3F4A96E /* Frameworks */,
+				6BBF3A75248ED38158EBBD60 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		"TEMP_0728D9D8-0E8F-4EB4-A543-1A47D6554FF2" /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_4CC7B33A-7A7B-4703-9C7D-45701B26EAF4" /* Local.xcconfig */,
+			);
+			path = ios;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0B00384D4913469F02FDE65D /* FantasyAgent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6792413E023AB3FF24026CF2 /* Build configuration list for PBXNativeTarget "FantasyAgent" */;
+			buildPhases = (
+				82EABCF0D57BBFE10302F897 /* Sources */,
+				A54931AFCB610811D2E8A489 /* Resources */,
+				1CAA017FA8D21D18A096AEAE /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FantasyAgent;
+			packageProductDependencies = (
+			);
+			productName = FantasyAgent;
+			productReference = E8D29B456BC79DAAEFD92DDF /* FantasyAgent.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C66BC4CE90E3F9F2163DFF5B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0B00384D4913469F02FDE65D = {
+						DevelopmentTeam = 5CL23C99C5;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 27A21F178CF42F4CE9DD0779 /* Build configuration list for PBXProject "FantasyAgent" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = DA852702BBDB2B5CDBBD4ABB;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6BBF3A75248ED38158EBBD60 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0B00384D4913469F02FDE65D /* FantasyAgent */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A54931AFCB610811D2E8A489 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7857E9DD458D98D722076AD2 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		82EABCF0D57BBFE10302F897 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0430A9DB92BAFCC9B8E86F23 /* AppState.swift in Sources */,
+				B1E8E6F75F04A16F9251931F /* FantasyAgentApp.swift in Sources */,
+				11CAD1461E1ED5FE5592F15D /* LeagueView.swift in Sources */,
+				44BEBBF1E5F82BD151E2FFCE /* LineupView.swift in Sources */,
+				6E39B1929A8BF9B30B90B2D2 /* MatchupView.swift in Sources */,
+				CF212E8403DCD09BE01C7D56 /* Models.swift in Sources */,
+				04713DDCE9FF3166B8DFFC86 /* PlayerDetailView.swift in Sources */,
+				27DAFC746D2B69584947B8F9 /* RosterView.swift in Sources */,
+				157C7125E375AF70EB726777 /* SACore.swift in Sources */,
+				8887657F96D7572EBFABEBE4 /* SettingsView.swift in Sources */,
+				D9D0E5F3C999243E8D5B65B6 /* Theme.swift in Sources */,
+				84ADCA92D2F76F9231C16D8B /* TradesView.swift in Sources */,
+				6281492A8C4DAC5001A8BB82 /* TrendingView.swift in Sources */,
+				D5A7A8D92A95F3CEC94B7C16 /* WaiverView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		89B87B7413AFB3D620446C14 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = "$(FA_BUILD)";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/FantasyAgent/Core";
+				INFOPLIST_KEY_CFBundleDisplayName = "Fantasy Agent";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(SRCROOT)/build/lib/$(PLATFORM_NAME)",
+				);
+				MARKETING_VERSION = "$(FA_VERSION)";
+				OTHER_LDFLAGS = (
+					"-lsa_ffi",
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fantasy-agent.ios";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "FantasyAgent/FantasyAgent-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		8ABC9724721F5085789F1291 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_4CC7B33A-7A7B-4703-9C7D-45701B26EAF4" /* Local.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		9A9D57A422B8F497FAF28C95 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_4CC7B33A-7A7B-4703-9C7D-45701B26EAF4" /* Local.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		A9F401A0D6A05535AFE3BEE1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = "$(FA_BUILD)";
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/FantasyAgent/Core";
+				INFOPLIST_KEY_CFBundleDisplayName = "Fantasy Agent";
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UIUserInterfaceStyle = Dark;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(SRCROOT)/build/lib/$(PLATFORM_NAME)",
+				);
+				MARKETING_VERSION = "$(FA_VERSION)";
+				OTHER_LDFLAGS = (
+					"-lsa_ffi",
+					"-framework",
+					Security,
+					"-framework",
+					CoreFoundation,
+					"-framework",
+					SystemConfiguration,
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.fantasy-agent.ios";
+				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "FantasyAgent/FantasyAgent-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		27A21F178CF42F4CE9DD0779 /* Build configuration list for PBXProject "FantasyAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9A9D57A422B8F497FAF28C95 /* Debug */,
+				8ABC9724721F5085789F1291 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		6792413E023AB3FF24026CF2 /* Build configuration list for PBXNativeTarget "FantasyAgent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9F401A0D6A05535AFE3BEE1 /* Debug */,
+				89B87B7413AFB3D620446C14 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C66BC4CE90E3F9F2163DFF5B /* Project object */;
+}

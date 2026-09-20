@@ -1,4 +1,5 @@
 build/
-*.xcodeproj/
 Local.xcconfig
-ExportOptions.plist
+# The project is committed for Xcode Cloud, but per-user state is not.
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
