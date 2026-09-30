@@ -169,15 +169,17 @@ struct Lineup: Codable {
 
 // MARK: - Waiver
 
+/// Mirrors `metrics::PlayerMetrics` in Rust, which is flat: it carries the
+/// player's id and name rather than a nested `Player` (the candidate that
+/// owns these metrics has the full `Player` beside them). Only the fields the
+/// app shows are decoded, so an extra Rust field never breaks the waiver tab.
 struct PlayerMetrics: Codable, Hashable {
-    let player: Player
-    let rosValue: Double
     let adjustedNextWeek: Double
+    let rosValue: Double
 
     enum CodingKeys: String, CodingKey {
-        case player
-        case rosValue = "ros_value"
         case adjustedNextWeek = "adjusted_next_week"
+        case rosValue = "ros_value"
     }
 }
 

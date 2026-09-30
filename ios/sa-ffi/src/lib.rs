@@ -843,6 +843,62 @@ mod tests {
         assert_eq!(back.news_sources, vec!["https://example.com/f".to_string()]);
     }
 
+    /// The Swift `WaiverReport` decodes exactly these keys. `PlayerMetrics`
+    /// in Rust is flat (`player_id`, `ros_value`, …) with no nested `player`;
+    /// the app once assumed one and failed every scan with "The data
+    /// couldn't be read because it is missing".
+    #[test]
+    fn waiver_report_serialises_the_shape_swift_decodes() {
+        use sleeper_agent::metrics::PlayerMetrics;
+        use sleeper_agent::waiver::{DropCandidate, WaiverCandidate, WaiverReport};
+
+        let player = |id: &str, slot: Position| Player {
+            id: id.into(),
+            name: id.to_uppercase(),
+            position: Position::RB,
+            roster_slot: slot,
+            team: "SF".into(),
+            projected_points: 12.0,
+            avg_points: 0.0,
+            status: PlayerStatus::Healthy,
+            opponent: None,
+            bye_week: None,
+            news: vec![],
+        };
+        let add = player("add", Position::BENCH);
+        let drop = player("drop", Position::BENCH);
+        let report = WaiverReport {
+            candidates: vec![WaiverCandidate {
+                priority: 1,
+                metrics: PlayerMetrics::for_player(&add, Strategy::Balanced),
+                player: add,
+                trending_adds: Some(3),
+                drop_candidate: Some(DropCandidate {
+                    metrics: PlayerMetrics::for_player(&drop, Strategy::Balanced),
+                    player: drop,
+                    net_ros_delta: 4.5,
+                }),
+                reasoning: "why".into(),
+            }],
+            raw: "notes".into(),
+        };
+
+        let v = serde_json::to_value(&report).unwrap();
+        assert!(v["raw"].is_string());
+        let c = &v["candidates"][0];
+        assert!(c["priority"].is_u64());
+        assert_eq!(c["player"]["id"], "add");
+        assert!(c["player"]["roster_slot"].is_string());
+        assert!(c["metrics"]["adjusted_next_week"].is_number());
+        assert!(c["metrics"]["ros_value"].is_number());
+        assert!(
+            c["metrics"].get("player").is_none(),
+            "metrics carry player_id, not a nested player; keep Models.swift in step"
+        );
+        assert_eq!(c["drop_candidate"]["player"]["id"], "drop");
+        assert!(c["drop_candidate"]["net_ros_delta"].is_number());
+    }
+
     #[test]
     fn ios_config_pins_the_api_backend() {
         // The CLI cannot run on iOS, so "auto" must never be able to pick it.
